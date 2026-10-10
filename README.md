@@ -1,66 +1,108 @@
 # Needledrop
 
-Search Apple Music, rip it to verified FLAC, and let beets file it into the
-library — with an Inbox for the matches that need a human.
+Search Apple Music, rip it to verified FLAC, and triage what beets makes of
+it — from one web page.
 
 ```
-Download page ──► .downloading/<job> ──► inbox (rips/apple) ──► buffer ──► beets
-   (search)        apple-music-to-flac.py   moved when every      30 s     strong match → library
-                                            track is present               otherwise → Inbox page
+Download ──► .downloading/<job> ──► inbox/ ──► 30 s quiet ──► beets lookup
+ (search)     gamdl + fre:ac → FLAC   moved when                 strong match → applied after a 10 s undo window
+                                      every track is there       anything else → Inbox triage
 ```
 
-One container, one compose stack. Auth is left to the reverse proxy
-(Traefik + the `notoverkill-sso` middleware).
+It's opinionated: lossless first, FLAC on disk, synced lyrics as `.ttml`
+sidecars, MusicBrainz as the main source, and nothing reaches your library
+without either a strong match or you saying so.
 
-## How it maps onto mini-server
+## What you need
 
-| Piece | Where it comes from |
-| --- | --- |
-| Downloads | `downloader/apple-music-to-flac.py`, vendored from `/srv/scripts/music` (gamdl 3.8.5 → fre:ac native ALAC decode → verified FLAC + `.ttml`). One job at a time, each in its own folder. |
-| wrapper-v2 | The existing `wrapper-v2` stack, reached on its compose network as `wrapper:80` / `wrapper:10020`. |
-| Download history | Shared with the `apple-music-to-rip` timer (`/srv/scripts/music/download-history.sqlite3`), so neither re-rips what the other already did. A job for something already ripped ends as **skipped**; use *Download again* to force it. |
-| Inbox | `rips/apple` — the same folder the timer writes to, so timer rips show up in the Inbox too. The tagger holds off while the timer's scratch folders show activity. |
-| beets | Pinned to the host versions (2.13.1, filetote 1.3.7, importreplace @2069316, pyacoustid 1.3.1) with fpcalc. Uses your `~/.config/beets/config.yaml` and `library.db` unchanged, mounted at the same path. The `searchfix` plugin is baked into the image (`beets/beetsplug/searchfix.py`) instead of loaded from the share. |
+- [wrapper-v2](https://github.com/glomatico/wrapper-v2) running and
+  logged in to an Apple Music account with an active subscription.
+  Needledrop joins its compose network and talks to `wrapper:80` and
+  `wrapper:10020`.
+- Docker with Compose.
+- Something in front for authentication if it's reachable beyond localhost.
+  Needledrop has no logins of its own.
 
-## Tagging rules
-
-- The automatic pass applies only beets' **strong** recommendation (distance
-  below `strong_rec_thresh`, the same rule as `beet import -q`). Everything
-  else waits on the Inbox page with its candidates, similarity and penalties.
-- Spotify candidates carry a 1.0 source penalty in your config, so they never
-  auto-apply. That's expected: apply them by hand.
-- Duplicates are skipped automatically and flagged; from the Inbox you can
-  keep both, replace the old one, or merge.
-- When nothing fits: search by MusicBrainz or Spotify ID/link, re-run, or
-  import as-is. Single songs pulled from a larger album are imported as
-  singletons.
-- Every action, automatic or manual, goes to the Log (pruned after 30 days).
-
-## Running
+## Quick start
 
 ```bash
-cp .env.example .env   # optional
+git clone https://github.com/ingoau/needledrop && cd needledrop
+cp .env.example .env        # point MUSIC_PATH at your music
 docker compose up -d --build
 ```
 
-Served at `needledrop.notoverkill.com` via Traefik's default host rule.
+Open http://localhost:8080. Under `MUSIC_PATH` Needledrop uses:
 
-### Settings
+| Folder | |
+| --- | --- |
+| `.downloading/` | one folder per running job |
+| `inbox/` | finished downloads, and anything else you drop in |
+| `library/` | where beets files things (the `directory` in its config) |
+
+The beets folder (`BEETS_PATH`) gets a default `config.yaml` on first start:
+MusicBrainz + chroma + Spotify + filetote, `move: yes`. Edit it freely.
+
+## Using an existing beets setup
+
+Mount your beets folder as `BEETS_PATH`. Needledrop layers a small overlay on
+top (`data/beets-overlay.yaml`): its bundled plugins come first, and a
+`library:` path that only exists on the host is pointed at the mounted
+folder instead. If your `library.db` stores host paths, mount the music at
+the same path inside the container (`MUSIC_MOUNT=$MUSIC_PATH`).
+
+beets is pinned (2.13.1 with filetote, importreplace, pyacoustid) so plugins
+built against it keep working. The bundled `searchfix` plugin tidies
+MusicBrainz and Spotify queries for Apple Music releases (drops the
+" - Single" suffix and requires every search field to match).
+
+## The Inbox
+
+Items are sorted by their best match. The triage view is built for the
+keyboard: move with `j`/`k`, flip candidates with `←`/`→`, `a` applies,
+`u` imports as-is, `t` switches to single tracks, `i` searches by
+MusicBrainz/Spotify ID, `?` shows everything. Every apply — including
+automatic ones — waits 10 seconds first, and `Ctrl/⌘+Z` takes it back.
+
+Each candidate shows a beets-style diff of artist, album and every track,
+plus the penalties that kept it from being a strong match. Spotify
+candidates are penalised in the default config, so they never auto-apply.
+
+## Download history
+
+Tracks Needledrop has downloaded are skipped by later jobs ("already
+downloaded"); *Download again* forces them. You can import an existing
+history from the Log tab, or:
+
+```bash
+docker compose exec needledrop python -m app.history import /data/old.sqlite3
+```
+
+Supported: apple-music-to-flac's `download-history.sqlite3` and gamdl's
+`--database-path` file.
+
+## Settings
 
 | Variable | Default | |
 | --- | --- | --- |
-| `AUTO_APPLY` | `true` | `false` = only show matches, never import on its own |
+| `MUSIC_PATH` / `MUSIC_MOUNT` | `./music` / `/music` | host folder and where it's mounted |
+| `BEETS_PATH` | `./beets` | beets config folder |
+| `INBOX_DIR`, `DOWNLOADING_DIR`, `LIBRARY_DIR` | under `MUSIC_MOUNT` | override the layout |
+| `AUTO_APPLY` | `true` | `false`: only show matches |
+| `UNDO_SECONDS` | `10` | how long an apply can be undone |
 | `TAGGER_BUFFER_SECONDS` | `30` | quiet time before an inbox folder is tagged |
-| `INBOX_DIR` | `/mnt/mediastackdata/music/rips/apple` | |
-| `DOWNLOADING_DIR` | `/mnt/mediastackdata/music/rips/.downloading` | same share as the library so moves are renames |
 | `AUDIO_POLICY` | `prefer-lossless` | or `lossless-only`, `aac-only` |
-| `HISTORY_DB` | `/srv/scripts/music/download-history.sqlite3` | |
+| `WRAPPER_NETWORK` | `wrapper-v2_default` | wrapper-v2's compose network |
+| `PUID` / `PGID` | `1000` | owner of your music files |
+| `PORT` / `BIND_ADDRESS` | `8080` / `127.0.0.1` | |
 | `LOG_RETENTION_DAYS` | `30` | |
 
-## Updating the vendored pieces
+Behind a reverse proxy, see `compose.override.example.yaml`.
 
-- Rip script: copy `/srv/scripts/music/apple-music-to-flac.py` over
-  `downloader/apple-music-to-flac.py`. It uses private gamdl APIs, so bump
-  `gamdl` in `downloader/requirements.txt` only together with the script.
-- `searchfix`: copy over `beets/beetsplug/searchfix.py`; it targets beets
-  2.13.1 internals.
+## How a download works
+
+`app/rip.py` runs once per job: gamdl fetches and decrypts through
+wrapper-v2, then ALAC is decoded with fre:ac (more tolerant of Apple's ALAC
+than FFmpeg, which is the fallback) and remuxed to FLAC with the original
+tags and artwork. The result must match the source's sample rate, channels,
+bit depth and duration, and the audio hash must survive the remux, before
+the `.m4a` is deleted. AAC-only tracks stay `.m4a`.

@@ -37,7 +37,7 @@ class Settings:
     # Empty = use the `directory` from the beets config.
     library_dir: str = _env("LIBRARY_DIR", "")
 
-    # wrapper-v2 (https://github.com/WorldObservationLog/wrapper), usually
+    # wrapper-v2 (https://github.com/glomatico/wrapper-v2), usually
     # reached over its compose network.
     wrapper_url: str = _env("WRAPPER_URL", "http://wrapper:80")
     wrapper_decrypt_host: str = _env("WRAPPER_DECRYPT_HOST", "wrapper")
