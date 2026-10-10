@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -16,7 +17,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import beets_setup, db, history
+from . import apple_ids, beets_setup, db, history
 from .apple import catalog
 from .config import settings
 from .downloads import downloads
@@ -380,6 +381,60 @@ async def archive_duplicates():
                f"{settings.undo_seconds}s unless undone")
     return {"count": len(rows), "pending_until": until,
             "paths": [r["path"] for r in rows]}
+
+
+@app.get("/api/inbox/apple")
+async def inbox_apple(path: str):
+    """Which Apple Music album an inbox folder is, and what it's missing."""
+    row = db.query_one("SELECT * FROM inbox WHERE path = ?", (path,))
+    if row is None or not os.path.isdir(path):
+        raise HTTPException(404, "Not in the inbox")
+    found = await asyncio.to_thread(apple_ids.read_folder, path)
+    album_id = found["album_id"]
+    try:
+        if not album_id and found["song_ids"]:
+            album_id = (await catalog.song(found["song_ids"][0])).get("album_id")
+        if not album_id:
+            return {**found, "album": None,
+                    "query": " ".join(x for x in (row["artist"], row["album"]) if x)}
+        detail = await catalog.album(album_id)
+    except Exception as exc:
+        raise HTTPException(502, f"Apple Music lookup failed: {exc}")
+    have = set(found["song_ids"])
+    songs = [t for t in detail["tracks"] if t["type"] == "song" and t["streamable"]]
+    missing = [t for t in songs if t["id"] not in have]
+    return {
+        **found,
+        "album": detail["album"],
+        "tracks": len(songs),
+        # Only trustworthy when every file told us its song id.
+        "missing": missing if not found["files_without_id"] else None,
+    }
+
+
+class RedownloadRequest(BaseModel):
+    path: str
+    which: str = "missing"  # missing | album
+
+
+@app.post("/api/inbox/redownload")
+async def inbox_redownload(body: RedownloadRequest):
+    info = await inbox_apple(body.path)
+    album = info.get("album")
+    if not album:
+        raise HTTPException(400, "Couldn't tell which Apple Music album this is")
+    options: dict[str, Any] = {"force": True, "replace_existing": body.which == "album"}
+    if body.which == "missing":
+        if not info.get("missing"):
+            raise HTTPException(400, "Nothing missing (or the files lack song ids)")
+        options["only"] = [t["id"] for t in info["missing"]]
+    job_id = downloads.create(
+        kind="album", apple_id=album["id"], url=album["url"], title=album["name"],
+        subtitle=album["artist"], artwork=album["artwork"],
+        expected_tracks=len(options.get("only") or []) or info.get("tracks"),
+        options=options,
+    )
+    return {"job": job_id, "tracks": len(options.get("only") or []) or info.get("tracks")}
 
 
 class UndoRequest(BaseModel):

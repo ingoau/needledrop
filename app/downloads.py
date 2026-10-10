@@ -163,6 +163,8 @@ class Downloads:
             args.append("--playlist-albums")
         if options.get("force"):
             args.append("--force")
+        if options.get("only"):
+            args += ["--only", ",".join(options["only"])]
 
         db.update("jobs", "id", job_id, status="downloading", done_tracks=0,
                   error=None, updated=time.time())
@@ -288,6 +290,7 @@ class Downloads:
     def _move_to_inbox(self, job: dict[str, Any]) -> int:
         src_root = self.job_dir(job["id"])
         dst_root = settings.inbox_dir
+        replace = json.loads(job.get("output") or "{}").get("options", {}).get("replace_existing")
         moved = 0
         album_dirs: set[Path] = set()
         if not src_root.exists():
@@ -301,6 +304,13 @@ class Downloads:
                 dst = dst_root / src.relative_to(src_root)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if dst.exists():
+                    if replace:
+                        # A re-download for this folder: the new copy wins.
+                        os.replace(src, dst)
+                        moved += 1
+                        if dst.suffix.lower() in AUDIO_EXTENSIONS:
+                            album_dirs.add(dst.parent)
+                        continue
                     if dst.stat().st_size == src.stat().st_size:
                         src.unlink()
                         continue

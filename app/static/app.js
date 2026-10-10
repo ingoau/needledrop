@@ -2085,6 +2085,82 @@
     } catch { /* toast shown by api() */ }
   }
 
+  // --- the release on Apple Music (from the files' Apple Music id tags)
+
+  const APPLE = new Map(); // path -> { loading, data, error }
+
+  function searchFor(query) {
+    const q = $('#q');
+    q.value = query;
+    S.search.q = query;
+    $('#q-clear').hidden = !query;
+    go('#download');
+    runSearch();
+  }
+
+  async function triFindApple(path = S.tri.sel) {
+    const it = findItem(path);
+    if (!it) return;
+    APPLE.set(path, { loading: true });
+    renderInbox();
+    try {
+      const data = await api(`api/inbox/apple?path=${encodeURIComponent(path)}`);
+      if (!data.album) {
+        APPLE.delete(path);
+        renderInbox();
+        toast(data.song_ids && data.song_ids.length
+          ? 'Couldn’t find that album on Apple Music — searching instead.'
+          : 'These files have no Apple Music ids — searching instead.', 'info', 3500);
+        searchFor(data.query || itemLabel(it));
+        return;
+      }
+      APPLE.set(path, { data });
+    } catch (e) {
+      APPLE.set(path, { error: (e && e.message) || 'Lookup failed' });
+    }
+    renderInbox();
+  }
+
+  async function triRedownload(path, which) {
+    try {
+      const r = await api('api/inbox/redownload', { method: 'POST', body: { path, which } });
+      toast(which === 'missing'
+        ? `Downloading ${plural(r.tracks, 'missing track')} — it lands back in this folder.`
+        : `Re-downloading ${plural(r.tracks, 'track')} — the new copies replace these files.`, 'success', 5000,
+      { action: { label: 'Show job', run: () => go('#download') } });
+      jobsPoller.kick();
+    } catch { /* toast shown by api() */ }
+  }
+
+  function appleHTML(it) {
+    const st = APPLE.get(it.path);
+    if (!st) return '';
+    if (st.loading) return html`<div class="apple-panel"><span class="spinner tiny" aria-hidden="true"></span><p>Looking it up on Apple Music…</p></div>`;
+    if (st.error) return html`<div class="apple-panel warn">${icon('warn')}<p>${st.error}</p></div>`;
+    const d = st.data;
+    const a = d.album;
+    const here = d.tracks - (d.missing ? d.missing.length : 0);
+    const missing = d.missing || [];
+    return html`
+      <div class="apple-panel" role="region" aria-label="On Apple Music">
+        ${artHTML(a.artwork, 'apple-art', 'disc')}
+        <div class="apple-info">
+          <p class="apple-title"><strong>${a.name}</strong> — ${a.artist}${a.year ? html` <span class="muted">${a.year}</span>` : ''}</p>
+          <p class="muted small">${d.missing == null
+            ? `${plural(d.files, 'file')} here, ${plural(d.tracks, 'track')} on Apple Music (some files have no song id, so missing tracks can't be worked out)`
+            : missing.length
+              ? html`${here} of ${d.tracks} tracks here · missing: ${missing.slice(0, 4).map((t) => t.name).join(', ')}${missing.length > 4 ? ` and ${missing.length - 4} more` : ''}`
+              : `All ${d.tracks} tracks are here`}</p>
+          <div class="apple-btns">
+            ${missing.length ? html`<button type="button" class="btn small primary" data-act="tri-redl" data-key="missing">${icon('download')} Download ${plural(missing.length, 'missing track')}</button>` : ''}
+            <button type="button" class="btn small" data-act="tri-redl" data-key="album">${icon('refresh')} Re-download album</button>
+            <a class="btn small ghost" href="${viewHash('album', a.id)}">${icon('open')} Open album</a>
+          </div>
+        </div>
+        <button type="button" class="icon-btn" data-act="tri-apple-close" aria-label="Close">${icon('x')}</button>
+      </div>`;
+  }
+
   function triSkip() {
     const it = findItem(S.tri.sel);
     if (!it) return;
@@ -2126,6 +2202,8 @@
       { label: it.status === 'waiting' ? 'Tag now' : 'Re-run tagger', icon: 'refresh', disabled: busy || done, run: () => triRetag(it.path) },
       { label: 'Import as-is', icon: 'download', disabled: busy || done, run: () => triAsis(it.path) },
       { label: it.singleton ? 'Look up as an album' : 'Import as single tracks', icon: 'list', disabled: busy || done, run: () => triToggleTracks(it.path) },
+      { label: 'Find on Apple Music', icon: 'search', run: () => { selectItem(it.path); triFindApple(it.path); } },
+      { label: 'Archive', icon: 'archive', disabled: busy || done, run: () => triArchive(it.path) },
       { sep: true },
       { label: 'Copy folder path', icon: 'copy', run: () => copyText(it.path, 'Folder path') },
     ];
@@ -2283,7 +2361,8 @@
     const open = [...S.open].filter((k) => k.includes(it.path)).sort().join(',');
     const st = S.status || {};
     return [JSON.stringify(it), cur.ti, cur.ci, S.tri.showUnchanged, open, S.pending.has('inbox:' + it.path),
-      S.tri.skipped.has(it.path), S.jobArt.get(it.job_id) || '', st.buffer_seconds, isPhone()].join('|');
+      S.tri.skipped.has(it.path), S.jobArt.get(it.job_id) || '', st.buffer_seconds, isPhone(),
+      JSON.stringify(APPLE.get(it.path) || null)].join('|');
   }
 
   function renderTriDetail(g) {
@@ -2340,6 +2419,7 @@
           </div>
         </header>
         ${pendingBanner(it)}
+        ${appleHTML(it)}
         ${statusBody(it)}
         ${it.auto_undone && it.status !== 'pending' ? html`<p class="tri-note">${icon('info')} Auto-apply was undone for this item, so it waits for you even though the match is strong.</p>` : ''}
         ${tasks.length > 1 ? html`<div class="task-tabs" role="group" aria-label="Tasks">${tasks.map((t, i) => html`
@@ -2499,6 +2579,7 @@
           <button type="button" class="btn ghost" data-act="tri-skip">${icon('skip')} Skip <kbd>S</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-archive"${dis}>${icon('archive')} Archive <kbd>D</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-tracks"${dis}>${it.singleton ? 'As album' : 'As tracks'} <kbd>T</kbd></button>
+          <button type="button" class="btn ghost" data-act="tri-apple">${icon('search')} On Apple Music <kbd>F</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-retag"${dis}>${icon('refresh')} ${it.status === 'waiting' ? 'Tag now' : 'Re-run'} <kbd>R</kbd></button>
           ${url ? html`<a class="btn ghost" href="${url}" target="_blank" rel="noopener noreferrer">${icon('external')} Open <kbd>O</kbd></a>` : ''}
         </div>
@@ -2563,6 +2644,7 @@
     { keys: ['r'], run: () => triRetag() },
     { keys: ['o'], run: () => triOpenLink() },
     { keys: ['d'], run: () => triArchive() },
+    { keys: ['f'], run: () => triFindApple() },
     { keys: ['i'], run: () => { const inp = $('#tri-id'); if (inp && !inp.disabled) { inp.focus(); inp.select(); } } },
     { keys: [DUP_KEYS.keep[0]], run: dupOnly('keep') },
     { keys: [DUP_KEYS.remove[0]], run: dupOnly('remove') },
@@ -2783,6 +2865,9 @@
     'tri-asis': () => triAsis(),
     'tri-skip': () => triSkip(),
     'tri-archive': () => triArchive(),
+    'tri-apple': () => triFindApple(),
+    'tri-apple-close': () => { APPLE.delete(S.tri.sel); renderInbox(); },
+    'tri-redl': (el) => triRedownload(S.tri.sel, el.dataset.key),
     'archive-dups': () => archiveDuplicates(),
     'tri-tracks': () => triToggleTracks(),
     'tri-retag': () => triRetag(),

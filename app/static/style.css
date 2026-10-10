@@ -2063,3 +2063,49 @@ a.card-title:hover, a.job-title:hover { color: var(--link); text-decoration: und
 .unavailable a.card-title { color: var(--muted); }
 
 .hist-hint { font-size: 12px; color: var(--muted); }
+
+/* ---------------------------------------------------------- Apple Music panel */
+.apple-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 18px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2, color-mix(in srgb, var(--surface) 80%, var(--text) 4%));
+}
+.apple-panel.warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.apple-panel > p { margin: 0; flex: 1; }
+.apple-art { width: 56px; height: 56px; border-radius: 6px; object-fit: cover; flex: none; }
+.apple-info { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.apple-info p { margin: 0; }
+.apple-title { overflow-wrap: anywhere; }
+.apple-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.apple-panel > .icon-btn { align-self: flex-start; }
+
+/* ---------------------------------------------------------- phones */
+@media (max-width: 639px) {
+  /* One swipeable row of decisions instead of three wrapped rows. */
+  .tri-actions { gap: 8px; padding: 10px 12px 12px; }
+  .tri-btns {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    width: 100%;
+    margin: 0 -2px;
+    padding: 0 2px 2px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tri-btns::-webkit-scrollbar { display: none; }
+  .tri-btns > .btn { flex: none; }
+  .idsearch { flex-basis: 100%; }
+  /* The section heading already says what these rows are. */
+  .q-row.s-review > .st { display: none; }
+  .apple-panel { margin: 12px 12px 0; align-items: flex-start; }
+  .apple-art { width: 44px; height: 44px; }
+}
+/* Keyboard hints mean nothing on touch screens. */
+@media (pointer: coarse) {
+  .tri-btns kbd, .apple-btns kbd, .dup-row kbd, .id-kbd { display: none; }
+}

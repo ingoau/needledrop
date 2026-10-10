@@ -149,8 +149,13 @@ def pcm_hash(path: Path) -> str:
     return out.strip()
 
 
-def to_flac(source: Path, freaccmd: str | None) -> Path:
-    """Convert an ALAC .m4a into a verified FLAC next to it; remove the source."""
+def to_flac(source: Path, freaccmd: str | None,
+            tags: dict[str, str] | None = None) -> Path:
+    """Convert an ALAC .m4a into a verified FLAC next to it; remove the source.
+
+    `tags` are extra Vorbis comments, e.g. the Apple Music ids that let
+    Needledrop find the release again later.
+    """
     src = probe(source)
     target = source.with_suffix(".flac")
     scratch = source.parent / ".needledrop-tmp"
@@ -186,6 +191,8 @@ def to_flac(source: Path, freaccmd: str | None) -> Path:
             "-map", "0:a:0", "-map", "1:v?", "-map_metadata", "1",
             "-c", "copy", "-disposition:v", "attached_pic",
             "-metadata:s:v", "comment=Cover (front)",
+            *[arg for key, value in (tags or {}).items() if value
+              for arg in ("-metadata", f"{key}={value}")],
             str(final),
         ])
         if pcm_hash(final) != native_hash:
@@ -363,8 +370,12 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
 
     if media.partial:
         if kind in ("albums", "library-albums"):
+            total = attrs.get("trackCount")
+            if args.only:
+                tracks = ((meta.get("relationships") or {}).get("tracks") or {}).get("data") or []
+                total = sum(1 for t in tracks if t.get("id") in args.only)
             emit("album", id=media.media_id, name=attrs.get("name"),
-                 artist=attrs.get("artistName"), total=attrs.get("trackCount"))
+                 artist=attrs.get("artistName"), total=total)
         elif kind in ("playlists", "library-playlists"):
             tracks = ((meta.get("relationships") or {}).get("tracks") or {}).get("data") or []
             emit("playlist", id=media.media_id, name=attrs.get("name"), total=len(tracks))
@@ -386,6 +397,8 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
     if kind not in ("songs", "library-songs"):
         stats["skipped"] += 1
         emit("track_skipped", reason="not a song", **info)
+        return
+    if args.only and media.media_id not in args.only:
         return
     if not args.force and history.has(media.media_id):
         stats["skipped"] += 1
@@ -413,7 +426,10 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
             codec = probe(final)["codec"]
             path = final
             if codec == "alac":
-                path = await asyncio.to_thread(to_flac, final, freaccmd)
+                path = await asyncio.to_thread(to_flac, final, freaccmd, {
+                    "apple_music_id": media.media_id,
+                    "apple_music_album_id": _album_id(item),
+                })
                 codec = "flac"
             stats["completed"] += 1
             emit("track_completed", path=str(path), codec=codec,
@@ -446,6 +462,8 @@ def main() -> None:
     parser.add_argument("--history-db")
     parser.add_argument("--playlist-albums", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--only", type=lambda v: set(v.split(",")), default=None,
+                        help="comma-separated song ids: download just these")
     parser.add_argument("--audio-policy", default="prefer-lossless",
                         choices=sorted(AUDIO_POLICIES))
     parser.add_argument("--lyrics-format", default="ttml",
