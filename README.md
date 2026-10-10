@@ -28,6 +28,7 @@ without either a strong match or you saying so.
 ```bash
 git clone https://github.com/ingoau/needledrop && cd needledrop
 cp .env.example .env        # point MUSIC_PATH at your music
+mkdir -p data music beets   # before the first start, so they're yours and not root's
 docker compose up -d --build
 ```
 

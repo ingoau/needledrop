@@ -175,6 +175,7 @@ class Downloads:
         p = self.progress = {
             "done": 0, "skipped": 0, "failed": 0, "current": None,
             "total": 0, "errors": [], "skipped_history": 0,
+            "lossy": [], "unavailable": [],
         }
         self.process = await asyncio.create_subprocess_exec(
             *args,
@@ -215,6 +216,7 @@ class Downloads:
         meta.update(
             returncode=returncode, tail=tail[-60:],
             summary=p.get("summary"), errors=p["errors"][-20:],
+            lossy=p["lossy"], unavailable=p["unavailable"],
         )
 
         if self._cancel_requested == job_id or returncode == 130:
@@ -226,6 +228,8 @@ class Downloads:
             status, error = "finishing", None
         elif returncode == 0 and p["skipped_history"] and not files:
             status, error = "skipped", "Already downloaded before (in the history)"
+        elif returncode == 0 and p["unavailable"] and not files:
+            status, error = "done", _unavailable_text(p["unavailable"])
         elif returncode == 0:
             status, error = "done", "Nothing to download"
         else:
@@ -240,16 +244,26 @@ class Downloads:
         if status == "finishing":
             moved = await asyncio.to_thread(self._move_to_inbox, self._get(job_id))
             db.update("jobs", "id", job_id, status="done", updated=time.time())
-            skipped = f", {p['skipped']} skipped" if p["skipped"] else ""
-            db.log("success", "download",
-                   f"Downloaded {p['done']} track(s){skipped}; {moved} file(s) to the inbox: {label}",
-                   ref=job_id, details={"summary": p.get("summary")})
+            notes = []
+            if p["lossy"]:
+                notes.append(f"{len(p['lossy'])} lossy (AAC)")
+            if p["unavailable"]:
+                notes.append(_unavailable_text(p["unavailable"]))
+            if p["skipped"]:
+                notes.append(f"{p['skipped']} already downloaded" if p["skipped"] == p["skipped_history"]
+                             else f"{p['skipped']} skipped")
+            db.log("warning" if p["lossy"] or p["unavailable"] else "success", "download",
+                   f"Downloaded {p['done']} track(s){' — ' + '; '.join(notes) if notes else ''}; "
+                   f"{moved} file(s) to the inbox: {label}",
+                   ref=job_id, details={"summary": p.get("summary"), "lossy": p["lossy"],
+                                        "unavailable": p["unavailable"]})
         elif status == "skipped":
             db.log("info", "download", f"Already downloaded: {label}", ref=job_id)
         elif status == "cancelled":
             db.log("info", "download", f"Cancelled: {label}", ref=job_id)
         elif status == "done":
-            db.log("warning", "download", f"Nothing downloaded: {label}", ref=job_id)
+            db.log("warning", "download", f"Nothing downloaded: {label}: {error}", ref=job_id,
+                   details={"unavailable": p["unavailable"]})
         else:
             db.log("error", "download",
                    f"{'Incomplete' if status == 'partial' else 'Failed'}: {label}: {error}",
@@ -268,7 +282,11 @@ class Downloads:
                 p["total"] = event.get("total") or 0
         elif name == "track_completed":
             p["done"] += 1
+            if event.get("lossless") is False:
+                p["lossy"].append({"title": event.get("title"), "codec": event.get("codec")})
             history.record(event, job_id)
+        elif name == "track_unavailable":
+            p["unavailable"].append({"title": event.get("title"), "reason": event.get("reason")})
         elif name == "track_skipped":
             p["skipped"] += 1
             if event.get("reason") == "history":
@@ -280,10 +298,12 @@ class Downloads:
             p["failed"] += 1
             p["errors"].append(event.get("error"))
         elif name == "summary":
-            p["summary"] = {k: event.get(k) for k in ("completed", "skipped", "failed")}
+            p["summary"] = {k: event.get(k) for k in
+                            ("completed", "lossy", "skipped", "unavailable", "failed")}
         elif name == "fatal":
             p["fatal"] = event.get("error")
-        if name in ("track_completed", "track_skipped", "track_failed", "album", "playlist"):
+        if name in ("track_completed", "track_skipped", "track_unavailable", "track_failed",
+                    "album", "playlist"):
             db.update("jobs", "id", job_id, done_tracks=p["done"], updated=time.time(),
                       expected_tracks=p["total"] or None)
 
@@ -407,6 +427,11 @@ def _archive_inbox_file(path: Path) -> None:
     for sibling in path.parent.iterdir():
         if sibling.stem == path.stem:
             shutil.move(str(sibling), str(dest_dir / sibling.name))
+
+
+def _unavailable_text(items: list[dict[str, Any]]) -> str:
+    reasons = sorted({i.get("reason") or "unavailable" for i in items})
+    return f"{len(items)} unavailable ({', '.join(reasons)})"
 
 
 def _audio_files(root: Path) -> list[Path]:

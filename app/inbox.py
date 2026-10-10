@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import mutagen.mp4
+
 from . import db
 from .config import AUDIO_EXTENSIONS, settings
 
@@ -57,6 +59,32 @@ def _scan_inbox() -> dict[str, tuple[str, int, str | None, str | None]]:
         album = parts[-1] if parts else None
         found[dirpath] = (digest.hexdigest(), len(audio), artist, album)
     return found
+
+
+LOSSY_EXTENSIONS = {".mp3", ".ogg", ".opus", ".wma", ".aac"}
+
+
+def _lossy_count(path: str) -> int:
+    """Lossy files in a folder; .m4a counts unless it holds ALAC."""
+    count = 0
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return 0
+    for name in names:
+        ext = Path(name).suffix.lower()
+        if name.startswith("."):
+            continue
+        if ext in LOSSY_EXTENSIONS:
+            count += 1
+        elif ext == ".m4a":
+            try:
+                codec = getattr(mutagen.mp4.MP4(os.path.join(path, name)).info, "codec", "")
+            except Exception:
+                codec = ""
+            if not str(codec).startswith("alac"):
+                count += 1
+    return count
 
 
 def _has_audio(path: str) -> bool:
@@ -249,11 +277,12 @@ class Inbox:
         for path, (fingerprint, count, artist, album) in found.items():
             row = known.get(path)
             if row is None:
+                lossy = await asyncio.to_thread(_lossy_count, path)
                 db.execute(
                     "INSERT INTO inbox (path, first_seen, last_change, fingerprint, "
-                    "status, artist, album, track_count) "
-                    "VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?)",
-                    (path, now, now, fingerprint, artist, album, count),
+                    "status, artist, album, track_count, lossy_count) "
+                    "VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?)",
+                    (path, now, now, fingerprint, artist, album, count, lossy),
                 )
                 db.log("info", "inbox", f"Arrived: {_label(artist, album)}",
                        ref=path, details={"tracks": count})
@@ -263,6 +292,7 @@ class Inbox:
                     "fingerprint": fingerprint,
                     "last_change": now,
                     "track_count": count,
+                    "lossy_count": await asyncio.to_thread(_lossy_count, path),
                 }
                 if row["status"] not in ("queued", "tagging"):
                     fields["status"] = "waiting"
@@ -270,6 +300,9 @@ class Inbox:
             elif row["status"] == "applied":
                 # Audio reappeared under a path we finished with.
                 db.update("inbox", "path", path, status="waiting", last_change=now)
+            elif row.get("lossy_count") is None:
+                db.update("inbox", "path", path,
+                          lossy_count=await asyncio.to_thread(_lossy_count, path))
 
         for path, row in known.items():
             if path in found:

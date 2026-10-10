@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,12 @@ def prepare() -> None:
     beets_dir = settings.beets_dir
     beets_dir.mkdir(parents=True, exist_ok=True)
     config_path = beets_dir / "config.yaml"
+    if not os.access(beets_dir, os.W_OK):
+        raise SystemExit(
+            f"Needledrop can't write to {beets_dir} (mounted from BEETS_PATH). "
+            f"Create the folder before starting, owned by the PUID:PGID the "
+            f"container runs as (uid {os.getuid()})."
+        )
     if not config_path.exists():
         library = settings.library_dir or str(settings.music_dir / "library")
         config_path.write_text(

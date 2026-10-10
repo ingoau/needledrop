@@ -87,13 +87,17 @@ TEMPLATES = dict(
     date_tag_template="%Y-%m-%dT%H:%M:%SZ",
 )
 
-SKIP_ERRORS = (
-    "GamdlInterfaceMediaNotStreamableError",
-    "GamdlInterfaceFormatNotAvailableError",
-    "GamdlInterfaceDecryptionNotAvailableError",
-    "GamdlInterfaceMediaNotAllowedError",
-    "GamdlInterfaceFlatFilterExcludedError",
-)
+# Apple won't give us these tracks: reported as "unavailable" with a reason,
+# never lumped in with skips ("already downloaded", music videos).
+UNAVAILABLE_ERRORS = {
+    "GamdlInterfaceMediaNotStreamableError": "not available to stream",
+    "GamdlInterfaceFormatNotAvailableError": "no version in the allowed formats",
+    "GamdlInterfaceDecryptionNotAvailableError": "can't be decrypted",
+    "GamdlInterfaceMediaNotAllowedError": "not allowed",
+    "GamdlInterfaceFlatFilterExcludedError": "excluded",
+}
+
+LOSSLESS = {"flac", "alac"}
 
 ATTEMPTS = 3
 
@@ -371,7 +375,7 @@ async def run(args: argparse.Namespace) -> int:
         urls = await playlist_album_urls(api, playlist.group(1))
         emit("expanded", albums=len(urls))
 
-    stats = {"completed": 0, "skipped": 0, "failed": 0}
+    stats = {"completed": 0, "lossy": 0, "skipped": 0, "unavailable": 0, "failed": 0}
     for url in urls:
         note(f"Processing {url}")
         try:
@@ -457,15 +461,21 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
                 })
                 codec = "flac"
             stats["completed"] += 1
+            if codec not in LOSSLESS:
+                stats["lossy"] += 1
             emit("track_completed", path=str(path), codec=codec,
+                 lossless=codec in LOSSLESS,
                  album_id=_album_id(item), **info)
             return
         except Exception as exc:
             name = type(exc).__name__
             last_error = f"{name}: {exc}"
-            if name in SKIP_ERRORS:
-                stats["skipped"] += 1
-                emit("track_skipped", reason=str(exc) or name, **info)
+            if name in UNAVAILABLE_ERRORS:
+                reason = UNAVAILABLE_ERRORS[name]
+                if name == "GamdlInterfaceFormatNotAvailableError" and args.audio_policy == "lossless-only":
+                    reason = "no lossless version"
+                stats["unavailable"] += 1
+                emit("track_unavailable", reason=reason, detail=str(exc), **info)
                 return
             note(f"Attempt {attempt}/{ATTEMPTS} failed for {title}: {last_error}")
             if attempt < ATTEMPTS:

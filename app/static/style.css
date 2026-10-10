@@ -2113,3 +2113,8 @@ a.card-title:hover, a.job-title:hover { color: var(--link); text-decoration: und
 .diff-hint > .ic { flex: none; margin-top: 3px; color: var(--info); }
 .diff-hint > span { flex: 1; min-width: 0; }
 .diff-hint strong { color: var(--text); font-weight: 600; }
+.job-quality { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; font-size: 0.85em; line-height: 1.45; color: var(--muted); }
+.job-quality > .ic { flex: none; margin-top: 2px; }
+.job-quality strong { color: var(--text); font-weight: 600; }
+.job-quality.lossy > .ic { color: var(--warn); }
+.job-quality.unavail > .ic { color: var(--info); }

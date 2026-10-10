@@ -197,6 +197,8 @@ async def list_jobs():
         meta = json.loads(job.pop("output") or "{}")
         job["options"] = meta.get("options", {})
         job["summary"] = meta.get("summary")
+        job["lossy"] = meta.get("lossy") or []
+        job["unavailable"] = meta.get("unavailable") or []
         job["tail"] = meta.get("tail") or []
         if job["id"] == downloads.current:
             job["progress"] = {

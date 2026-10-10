@@ -1415,7 +1415,22 @@
     cancelled: ['Cancelled', 'muted'],
   };
 
-  const SUMMARY_LABELS = [['completed', 'completed'], ['skipped', 'skipped'], ['failed', 'failed']];
+  const SUMMARY_LABELS = [
+    ['completed', 'downloaded'], ['lossy', 'lossy (AAC)'], ['unavailable', 'unavailable'],
+    ['skipped', 'skipped'], ['failed', 'failed'],
+  ];
+
+  /** Which songs came down lossy, and which Apple wouldn't provide. */
+  function qualityHTML(lossy, unavailable) {
+    const out = [];
+    if (lossy && lossy.length) {
+      out.push(html`<p class="job-quality lossy">${icon('warn')}<span><strong>Lossy (AAC):</strong> ${lossy.map((t) => t.title).join(', ')}</span></p>`);
+    }
+    if (unavailable && unavailable.length) {
+      out.push(html`<p class="job-quality unavail">${icon('info')}<span><strong>Not downloaded:</strong> ${unavailable.map((t) => `${t.title} (${t.reason})`).join(', ')}</span></p>`);
+    }
+    return out;
+  }
 
   async function fetchJobs() {
     const started = Date.now();
@@ -1469,6 +1484,8 @@
       if (p.skipped_history) bits.push(`${p.skipped_history} already downloaded`);
       const otherSkipped = (p.skipped || 0) - (p.skipped_history || 0);
       if (otherSkipped > 0) bits.push(`${otherSkipped} skipped`);
+      if (p.lossy && p.lossy.length) bits.push(`${p.lossy.length} lossy`);
+      if (p.unavailable && p.unavailable.length) bits.push(`${p.unavailable.length} unavailable`);
       if (p.failed) bits.push(`${p.failed} failed`);
       progress = html`
         <div class="progress${pct == null ? ' indeterminate' : ''}" role="progressbar" aria-label="Download progress"
@@ -1536,6 +1553,7 @@
           ${progress}
           ${showErr ? html`<p class="job-err ${errCls}">${errCls ? '' : icon('warn')}${j.error}</p>` : ''}
           ${stats.length ? html`<div class="stats">${stats}</div>` : ''}
+          ${running ? qualityHTML(p.lossy, p.unavailable) : qualityHTML(j.lossy, j.unavailable)}
           <div class="job-meta">
             ${tags}
             <span class="sep" aria-hidden="true">·</span>
@@ -1776,6 +1794,7 @@
     const sub = [
       it.track_count != null ? plural(it.track_count, 'track') : null,
       it.singleton ? 'as tracks' : null,
+      it.lossy_count ? `${it.lossy_count} lossy` : null,
       skipped ? 'skipped' : null,
     ].filter(Boolean).join(' · ');
     const working = it.status === 'queued' || it.status === 'tagging';
@@ -2414,7 +2433,8 @@
     const { tasks, ti, task, cands, ci, c } = triCurrent(it.path);
     const busy = isBusy(it);
     const [label, tone] = statusOf(it);
-    const meta = [it.artist, it.track_count != null ? plural(it.track_count, 'track') : null, it.singleton ? 'as single tracks' : null].filter(Boolean);
+    const meta = [it.artist, it.track_count != null ? plural(it.track_count, 'track') : null, it.singleton ? 'as single tracks' : null,
+      it.lossy_count ? plural(it.lossy_count, 'lossy file') : null].filter(Boolean);
     const showMatch = task && ['review', 'duplicate', 'pending', 'error'].includes(it.status);
     return html`
       <article class="tri-card s-${it.status}" data-path="${it.path}" data-menu="inbox:${it.path}" aria-labelledby="tri-title">
