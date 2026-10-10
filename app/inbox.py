@@ -160,9 +160,8 @@ class Inbox:
             return None
         action = json.loads(row["pending"] or "{}")
         report = json.loads(row["report"] or "{}")
-        if action.get("auto"):
-            # Don't auto-apply this exact content again.
-            report["auto_undone"] = True
+        # Whoever applied it, an undo means: don't auto-apply this content.
+        report["auto_undone"] = True
         db.update("inbox", "path", row["path"], status=_status_from_report(report),
                   report=json.dumps(report), pending=None, pending_until=None)
         db.log("info", "tagger",
@@ -258,6 +257,24 @@ class Inbox:
             db.log("info", "inbox",
                    f"Left the inbox: {_label(row['artist'], row['album'])}",
                    ref=path)
+
+        # Strong matches found while auto-apply was off, or before a restart.
+        if settings.auto_apply:
+            for row in db.query(
+                "SELECT * FROM inbox WHERE status = 'review' AND report IS NOT NULL"
+            ):
+                report = json.loads(row["report"])
+                best = _best_candidate(report.get("tasks") or [])
+                if best and _strong_but_unapplied(report):
+                    self.schedule(row["path"], {
+                        "mode": "apply", "candidate": best["id"], "auto": True,
+                    })
+                    db.log("info", "tagger",
+                           f"Strong match ({round(best['similarity'] * 100, 1)}%), "
+                           f"applying in {settings.undo_seconds}s unless undone: "
+                           f"{_label(row['artist'], row['album'])} → "
+                           f"{best.get('artist')} - {best.get('title')}",
+                           ref=row["path"], details={"candidate": best})
 
         # Hand settled items to the tagger.
         for row in db.query("SELECT * FROM inbox WHERE status = 'waiting'"):
@@ -466,7 +483,11 @@ def _status_from_report(report: dict[str, Any]) -> str:
 
 def _strong_but_unapplied(report: dict[str, Any]) -> bool:
     """A look-only verdict (auto-apply was off) that auto-apply would take."""
-    return report.get("mode") == "candidates" and not report.get("auto_undone") and any(
+    return (
+        report.get("mode") == "candidates"
+        and not report.get("auto_undone")
+        and not report.get("last_action")  # an apply was tried and didn't import
+    ) and any(
         task.get("recommendation") == "strong" and not task.get("duplicates")
         for task in report.get("tasks") or []
     )
