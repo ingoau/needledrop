@@ -54,6 +54,7 @@ async def status() -> dict[str, Any]:
         "account": account,
         "auto_apply": settings.auto_apply,
         "buffer_seconds": settings.tagger_buffer_seconds,
+        "log_retention_days": settings.log_retention_days,
         "inbox_dir": str(settings.inbox_dir),
         "downloading": downloads.current,
         "tagging": inbox.current,
@@ -245,6 +246,7 @@ async def list_inbox():
         row["mode"] = report.get("mode")
         if row["status"] == "error":
             row["stderr"] = report.get("stderr")
+            row["report_error"] = report.get("error")
     return {"items": rows}
 
 

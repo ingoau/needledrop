@@ -469,6 +469,10 @@
 
   function renderStatus() {
     const st = S.status;
+    const logSub = $('#log-sub');
+    if (logSub && st && st.log_retention_days) {
+      logSub.textContent = `The latest 300 events. Entries older than ${st.log_retention_days} days are pruned.`;
+    }
     const pill = $('#account-pill');
     let tone;
     let label;
@@ -1516,7 +1520,7 @@
 
   function errorHTML(it) {
     const t0 = (it.tasks || [])[0];
-    const msg = it.error || (t0 && t0.error) || 'beets failed without saying why.';
+    const msg = it.report_error || it.error || (t0 && t0.error) || 'beets failed without saying why.';
     const out = it.stderr || '';
     const k = 'err:' + it.path;
     const open = S.open.has(k);
