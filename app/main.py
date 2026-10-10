@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import uuid
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -412,9 +413,37 @@ async def events(limit: int = 200, kind: str | None = None, ref: str | None = No
 # ------------------------------------------------------------------ UI
 
 
+def _asset_version() -> str:
+    digest = hashlib.sha1()
+    for name in sorted(p.name for p in STATIC.iterdir() if p.is_file()):
+        digest.update((STATIC / name).read_bytes())
+    return digest.hexdigest()[:10]
+
+
+ASSET_VERSION = _asset_version()
+INDEX_HTML = re.sub(
+    r'(static/[\w.-]+\.(?:js|css|svg))"',
+    rf'\1?v={ASSET_VERSION}"',
+    (STATIC / "index.html").read_text(),
+)
+
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    # Always revalidate the page; its asset URLs change with every release.
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
+
+
+@app.middleware("http")
+async def static_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable"
+            if request.query_params.get("v") == ASSET_VERSION
+            else "no-cache"
+        )
+    return response
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
