@@ -58,6 +58,7 @@ async def status() -> dict[str, Any]:
         "downloading": downloads.current,
         "tagging": inbox.current,
         "tag_queue": inbox.queue.qsize(),
+        "rip_active": inbox.rip_active,
         "inbox_counts": counts,
     }
 
