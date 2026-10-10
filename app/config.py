@@ -38,6 +38,21 @@ class Settings:
     wrapper_decrypt_port: int = _env_int("WRAPPER_DECRYPT_PORT", 10020)
     language: str = _env("APPLE_MUSIC_LANGUAGE", "en-US")
 
+    # Download engine: the apple-music-to-flac.py rip script
+    rip_python: str = _env("RIP_PYTHON", "/opt/app/bin/python")
+    rip_script: str = _env(
+        "RIP_SCRIPT", "/opt/needledrop/downloader/apple-music-to-flac.py"
+    )
+    gamdl_ini_template: str = _env(
+        "GAMDL_INI", "/opt/needledrop/downloader/gamdl.ini"
+    )
+    history_db: str = _env(
+        "HISTORY_DB", "/srv/scripts/music/download-history.sqlite3"
+    )
+    freaccmd: str = _env("FREACCMD", "/usr/local/bin/freaccmd")
+    audio_policy: str = _env("AUDIO_POLICY", "prefer-lossless")
+    lyrics_format: str = _env("LYRICS_FORMAT", "ttml")
+
     # beets
     beet_python: str = _env("BEET_PYTHON", "/opt/beets/bin/python")
     beet_driver: str = _env(

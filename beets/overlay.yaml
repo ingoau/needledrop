@@ -1,0 +1,4 @@
+# Layered over the host's beets config by Needledrop. Plugins come from the
+# image (pinned searchfix copy) instead of the share's .beets-plugins folder.
+pluginpath:
+  - /opt/needledrop/beets/beetsplug
