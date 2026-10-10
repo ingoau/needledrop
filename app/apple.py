@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any
 
+import structlog
 from gamdl.api import AppleMusicApi
 from gamdl.api.wrapper import WrapperApi
 
@@ -15,6 +17,12 @@ URL_RE = re.compile(
     r"music\.apple\.com/(?P<storefront>[a-z]{2})/"
     r"(?P<type>album|song|playlist|artist|music-video)/"
     r"(?:[^/?#]+/)?(?P<id>[^/?#]+)(?:\?(?P<query>[^#]*))?"
+)
+
+# gamdl logs API responses (including wrapper tokens) at debug level through
+# structlog's default config; keep only warnings and up.
+structlog.configure(
+    wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING)
 )
 
 TYPE_MAP = {
