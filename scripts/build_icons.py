@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 ICONS = {
+    "archive": "archive",
     "back": "arrow-left",
     "check": "check",
     "chevron": "chevron-down",

@@ -60,6 +60,7 @@ async def status() -> dict[str, Any]:
         "auto_apply": settings.auto_apply,
         "buffer_seconds": settings.tagger_buffer_seconds,
         "log_retention_days": settings.log_retention_days,
+        "archive_dir": str(settings.archive_dir),
         "inbox_dir": str(settings.inbox_dir),
         "downloading": downloads.current,
         "tagging": inbox.current,
@@ -344,6 +345,8 @@ async def inbox_action(body: InboxAction):
         result["pending_until"] = inbox.schedule(body.path, {
             "mode": "asis", "duplicate_action": body.duplicate_action,
         })
+    elif body.action == "archive":
+        result["pending_until"] = inbox.schedule(body.path, {"mode": "archive"})
     elif body.action == "search":
         search_id = _clean_id(body.search_id or "")
         if not search_id:
@@ -364,6 +367,21 @@ async def inbox_action(body: InboxAction):
     return result
 
 
+@app.post("/api/inbox/archive-duplicates")
+async def archive_duplicates():
+    """Archive every duplicate in one undoable batch."""
+    batch = uuid.uuid4().hex[:8]
+    rows = db.query("SELECT * FROM inbox WHERE status = 'duplicate'")
+    until = None
+    for row in rows:
+        until = inbox.schedule(row["path"], {"mode": "archive", "batch": batch})
+    if rows:
+        db.log("info", "inbox", f"Archiving {len(rows)} duplicates in "
+               f"{settings.undo_seconds}s unless undone")
+    return {"count": len(rows), "pending_until": until,
+            "paths": [r["path"] for r in rows]}
+
+
 class UndoRequest(BaseModel):
     path: str | None = None  # default: the most recent pending action
 
@@ -374,7 +392,8 @@ async def inbox_undo(body: UndoRequest):
     if row is None:
         raise HTTPException(409, "Nothing to undo (it may already have been applied)")
     restored = db.query_one("SELECT status FROM inbox WHERE path = ?", (row["path"],))
-    return {"ok": True, "path": row["path"], "status": restored and restored["status"]}
+    return {"ok": True, "path": row["path"], "status": restored and restored["status"],
+            "undone": row.get("undone", [row["path"]])}
 
 
 def _clean_id(value: str) -> str:

@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import json
 import os
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -121,7 +122,7 @@ class Inbox:
             raise KeyError(path)
         if singletons is None:
             singletons = bool(row["singleton"])
-        db.update("inbox", "path", path, status="queued", error=None)
+        db.update("inbox", "path", path, status="queued", error=None, queued_mode=mode)
         self.queue.put_nowait(
             TagRequest(
                 priority=0 if manual else 1,
@@ -147,6 +148,8 @@ class Inbox:
         return until
 
     def undo(self, path: str | None = None) -> dict[str, Any] | None:
+        """Cancel a pending action (the newest one without a path). Actions
+        scheduled together (a batch) are undone together."""
         if path is None:
             row = db.query_one(
                 "SELECT * FROM inbox WHERE status = 'pending' "
@@ -158,15 +161,29 @@ class Inbox:
             )
         if row is None:
             return None
-        action = json.loads(row["pending"] or "{}")
-        report = json.loads(row["report"] or "{}")
-        # Whoever applied it, an undo means: don't auto-apply this content.
-        report["auto_undone"] = True
-        db.update("inbox", "path", row["path"], status=_status_from_report(report),
-                  report=json.dumps(report), pending=None, pending_until=None)
+        batch = json.loads(row["pending"] or "{}").get("batch")
+        rows = [row]
+        if batch:
+            rows = [
+                r for r in db.query("SELECT * FROM inbox WHERE status = 'pending'")
+                if json.loads(r["pending"] or "{}").get("batch") == batch
+            ]
+        for r in rows:
+            action = json.loads(r["pending"] or "{}")
+            report = json.loads(r["report"] or "{}")
+            if action.get("mode") in ("apply", "asis"):
+                # Whoever applied it, an undo means: don't auto-apply this content.
+                report["auto_undone"] = True
+            db.update("inbox", "path", r["path"], status=_status_from_report(report),
+                      report=json.dumps(report), pending=None, pending_until=None)
+        what = json.loads(row["pending"] or "{}").get("mode", "apply")
         db.log("info", "tagger",
-               f"Undone {action.get('mode', 'apply')}: {_label(row['artist'], row['album'])}",
-               ref=row["path"])
+               f"Undone {what}: " + (
+                   f"{len(rows)} items" if len(rows) > 1
+                   else _label(row["artist"], row["album"])
+               ),
+               ref=None if len(rows) > 1 else row["path"])
+        row["undone"] = [r["path"] for r in rows]
         return row
 
     async def _pending_loop(self) -> None:
@@ -179,6 +196,9 @@ class Inbox:
             ):
                 action = json.loads(row["pending"] or "{}")
                 db.update("inbox", "path", row["path"], pending=None, pending_until=None)
+                if action.get("mode") == "archive":
+                    await asyncio.to_thread(self._archive, row)
+                    continue
                 self.enqueue(
                     row["path"], action.get("mode", "apply"),
                     manual=True,
@@ -412,6 +432,32 @@ class Inbox:
             db.log("info", "tagger",
                    f"Needs review ({sim}): {label}", ref=request.path,
                    details={"best": best})
+
+    def _archive(self, row: dict[str, Any]) -> None:
+        """Move an inbox folder to the archive, keeping its relative path."""
+        src = Path(row["path"])
+        label = _label(row["artist"], row["album"])
+        try:
+            rel = src.relative_to(settings.inbox_dir)
+        except ValueError:
+            rel = Path(src.name)
+        dest = settings.archive_dir / time.strftime("%Y-%m-%d") / rel
+        n = 2
+        while dest.exists():
+            dest = dest.with_name(f"{rel.name} ({n})")
+            n += 1
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+        except OSError as exc:
+            db.update("inbox", "path", row["path"], status="error",
+                      error=f"Archive failed: {exc}")
+            db.log("error", "inbox", f"Couldn't archive {label}: {exc}", ref=row["path"])
+            return
+        db.execute("DELETE FROM inbox WHERE path = ?", (row["path"],))
+        _remove_empty_dirs(str(src.parent))
+        db.log("info", "inbox", f"Archived: {label} → {dest}", ref=row["path"],
+               details={"archived_to": str(dest)})
 
     def _after_import(self, path: str) -> None:
         if not _has_audio(path):

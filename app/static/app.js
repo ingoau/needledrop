@@ -1627,7 +1627,18 @@
     error: ['Error', 'bad'],
     applied: ['Imported', 'good'],
   };
-  const DUP_KEYS = { keep: ['k', 'Keep both'], remove: ['x', 'Replace old'], merge: ['g', 'Merge'] };
+  // What a queued/tagging item is waiting for: a lookup never imports.
+  const BUSY_LABELS = {
+    queued: { candidates: 'Lookup queued', apply: 'Apply queued', asis: 'Import queued' },
+    tagging: { candidates: 'Looking up', apply: 'Importing', asis: 'Importing' },
+  };
+  const statusOf = (it) => {
+    const [label, tone] = statusOf(it);
+    const busy = BUSY_LABELS[it.status];
+    if (it.status === 'pending' && it.pending && it.pending.mode === 'archive') return ['Archiving', tone];
+    return [(busy && busy[it.queued_mode]) || label, tone];
+  };
+  const DUP_KEYS = { keep: ['b', 'Keep both'], remove: ['x', 'Replace old'], merge: ['g', 'Merge'] };
 
   const findItem = (path) => S.inbox.items.find((i) => i.path === path);
   const itemName = (it) => it.album || (it.relpath || '').split('/').pop() || it.relpath || it.path;
@@ -1721,7 +1732,9 @@
       ['progress', g.progress.length, 'in progress', 'neutral'],
       ['applied', g.applied.length, 'imported', 'good'],
     ].filter((p) => p[1]);
-    setHTML($('#inbox-counts'), parts.map(([, n, l, t]) => html`<span class="count-chip t-${t}"><b>${n}</b> ${l}</span>`));
+    const dupCount = S.inbox.items.filter((i) => i.status === 'duplicate').length;
+    setHTML($('#inbox-counts'), html`${parts.map(([, n, l, t]) => html`<span class="count-chip t-${t}"><b>${n}</b> ${l}</span>`)}${dupCount ? html`
+      <button type="button" class="btn small" data-act="archive-dups" title="Move every album that's already in your library to ${(S.status && S.status.archive_dir) || 'the archive'} (undoable)">${icon('archive')} Archive ${dupCount} duplicate${dupCount === 1 ? '' : 's'}</button>` : ''}`);
     const st = S.status;
     setHTML($('#inbox-mode'), !st ? '' : st.auto_apply
       ? html`<span class="mode on">${icon('check')} Auto-apply on</span>
@@ -1748,6 +1761,7 @@
   function pendingVerb(it) {
     const p = it.pending || {};
     if (p.mode === 'asis') return 'Importing as-is';
+    if (p.mode === 'archive') return 'Archiving';
     return p.auto ? 'Auto-applying' : 'Applying';
   }
 
@@ -1756,7 +1770,7 @@
 
   function qRowHTML(it) {
     const sel = it.path === S.tri.sel;
-    const [label, tone] = INBOX_STATUS[it.status] || [it.status, 'neutral'];
+    const [label, tone] = statusOf(it);
     const pend = it.status === 'pending';
     const skipped = S.tri.skipped.has(it.path);
     const sub = [
@@ -1836,7 +1850,7 @@
     const next = nav[clamp(i + delta, 0, nav.length - 1)];
     if (next && next.path !== S.tri.sel) {
       selectItem(next.path);
-      announce(`${itemLabel(next)}, ${INBOX_STATUS[next.status] ? INBOX_STATUS[next.status][0] : next.status}${next.best_similarity != null ? `, best match ${pctText(next.best_similarity)}` : ''}`);
+      announce(`${itemLabel(next)}, ${statusOf(next)[0]}${next.best_similarity != null ? `, best match ${pctText(next.best_similarity)}` : ''}`);
     }
   }
 
@@ -1942,7 +1956,7 @@
     Object.assign(it, fields);
     S.tri.skipped.delete(path);
     renderInbox();
-    const verb = body.action === 'asis' ? 'Importing as-is' : 'Applying';
+    const verb = { asis: 'Importing as-is', archive: 'Archiving' }[body.action] || 'Applying';
     try {
       const r = await api('api/inbox/action', { method: 'POST', body: { path, ...body } });
       const until = (r && r.pending_until) || fields.pending_until;
@@ -2021,7 +2035,7 @@
     if (isBusy(it)) { toast(it.status === 'pending' ? 'Already applying — undo it first to choose again.' : 'Busy — wait for the tagger.', 'warn', 3000); return; }
     if (!['review', 'duplicate', 'error'].includes(it.status)) { toast('Nothing to apply for this item yet.', 'info', 2500); return; }
     if (it.status === 'duplicate' && !dupAction) {
-      toast('Already in your library — press K to keep both, X to replace the old copy or G to merge.', 'warn', 6000);
+      toast('Already in your library — press B to keep both, X to replace the old copy or G to merge.', 'warn', 6000);
       return;
     }
     const asisDecision = task && task.decision === 'asis' && !task.chosen;
@@ -2042,6 +2056,33 @@
     if (isBusy(it)) { toast('Busy — wait for the tagger.', 'warn', 3000); return; }
     if (it.status === 'applied') return;
     scheduleAction(it, { action: 'asis', duplicate_action: 'skip' }, `${itemLabel(it)} (as-is)`);
+  }
+
+  function triArchive(path = S.tri.sel) {
+    const it = findItem(path);
+    if (!it) return;
+    if (isBusy(it)) { toast('Busy — wait for the tagger.', 'warn', 3000); return; }
+    if (it.status === 'applied') return;
+    scheduleAction(it, { action: 'archive' }, `${itemLabel(it)} → archive`);
+  }
+
+  async function archiveDuplicates() {
+    const dups = S.inbox.items.filter((i) => i.status === 'duplicate');
+    if (!dups.length) return;
+    try {
+      const r = await api('api/inbox/archive-duplicates', { method: 'POST', body: {} });
+      if (!r.count) return;
+      const label = `${r.count} duplicate${r.count === 1 ? '' : 's'}`;
+      // The server undoes the whole batch through any one of its paths.
+      const entry = { path: r.paths[0], label, snapshot: { status: 'duplicate' }, until: r.pending_until, toast: null };
+      entry.toast = toast(`Archiving ${label}`, 'success', null, {
+        until: r.pending_until,
+        action: { label: 'Undo', kbd: UNDO_KBD, run: () => triUndo(entry.path) },
+      });
+      S.tri.undoStack.push(entry);
+      announce(`Archiving ${label}. Press ${UNDO_SPOKEN} to undo.`);
+      inboxPoller.kick();
+    } catch { /* toast shown by api() */ }
   }
 
   function triSkip() {
@@ -2279,7 +2320,7 @@
   function triDetailHTML(it) {
     const { tasks, ti, task, cands, ci, c } = triCurrent(it.path);
     const busy = isBusy(it);
-    const [label, tone] = INBOX_STATUS[it.status] || [it.status, 'neutral'];
+    const [label, tone] = statusOf(it);
     const meta = [it.artist, it.track_count != null ? plural(it.track_count, 'track') : null, it.singleton ? 'as single tracks' : null].filter(Boolean);
     const showMatch = task && ['review', 'duplicate', 'pending', 'error'].includes(it.status);
     return html`
@@ -2376,6 +2417,7 @@
         <div class="dup-row">
           ${Object.entries(DUP_KEYS).map(([action, [key, label]]) => html`
             <button type="button" class="btn${action === 'keep' ? ' primary' : ''}" data-act="tri-dup" data-key="${action}"${flag(busy, 'disabled')}>${label} <kbd>${key.toUpperCase()}</kbd></button>`)}
+          <button type="button" class="btn" data-act="tri-archive"${flag(busy, 'disabled')}>${icon('archive')} Archive this copy <kbd>D</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-skip">Leave it <kbd>S</kbd></button>
         </div>
       </div>`;
@@ -2455,6 +2497,7 @@
           <button type="button" class="btn primary" data-act="tri-apply"${flag(busy || !c || !decidable || it.status === 'duplicate', 'disabled')}>${icon('check')} Apply <kbd>A</kbd></button>
           <button type="button" class="btn" data-act="tri-asis"${dis}>Use as-is <kbd>U</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-skip">${icon('skip')} Skip <kbd>S</kbd></button>
+          <button type="button" class="btn ghost" data-act="tri-archive"${dis}>${icon('archive')} Archive <kbd>D</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-tracks"${dis}>${it.singleton ? 'As album' : 'As tracks'} <kbd>T</kbd></button>
           <button type="button" class="btn ghost" data-act="tri-retag"${dis}>${icon('refresh')} ${it.status === 'waiting' ? 'Tag now' : 'Re-run'} <kbd>R</kbd></button>
           ${url ? html`<a class="btn ghost" href="${url}" target="_blank" rel="noopener noreferrer">${icon('external')} Open <kbd>O</kbd></a>` : ''}
@@ -2478,8 +2521,8 @@
     const dup = it && it.status === 'duplicate';
     const k = (key, before, after = '') => html`<span class="hk">${before}<b>${key}</b>${after}</span>`;
     const parts = dup
-      ? [k('K', '', 'eep both'), k('X', 'Replace old (', ')'), k('g', 'Mer', 'e'), k('M', '', 'ore candidates'), k('S', '', 'kip'), k('U', '', 'se as-is'), k('I', 'Enter ', 'd')]
-      : [k('A', '', 'pply'), k('M', '', 'ore candidates'), k('S', '', 'kip'), k('U', '', 'se as-is'), k('T', 'as ', 'racks'), k('I', 'Enter ', 'd'), k('R', '', 'e-run'), k('O', '', 'pen')];
+      ? [k('D', 'Archive (', ')'), k('b', 'Keep ', 'oth'), k('X', 'Replace old (', ')'), k('g', 'Mer', 'e'), k('M', '', 'ore candidates'), k('S', '', 'kip'), k('U', '', 'se as-is'), k('I', 'Enter ', 'd')]
+      : [k('A', '', 'pply'), k('D', 'Archive (', ')'), k('M', '', 'ore candidates'), k('S', '', 'kip'), k('U', '', 'se as-is'), k('T', 'as ', 'racks'), k('I', 'Enter ', 'd'), k('R', '', 'e-run'), k('O', '', 'pen')];
     setHTML($('#tri-hint-keys'), html`${parts}<span class="hint-sep">·</span><span><kbd>j</kbd><kbd>k</kbd> move</span><span><kbd>${UNDO_KBD}</kbd> undo</span>`);
   }
 
@@ -2492,39 +2535,61 @@
     }
   }
 
-  /** Inbox shortcuts. Returns true when the key was handled. */
+  /**
+   * Inbox shortcuts. Every key means one thing in every state: nothing here
+   * changes meaning depending on the selected item. Keys handled outside
+   * this table (global search, undo, context menu) are listed in
+   * GLOBAL_KEYS so the clash check below covers them too.
+   */
+  const GLOBAL_KEYS = ['/'];
+  const dupOnly = (action) => () => {
+    const it = findItem(S.tri.sel);
+    if (it && it.status === 'duplicate') triApply(action);
+    else toast(`${DUP_KEYS[action][1]} only applies to albums already in your library.`, 'info', 2500);
+  };
+  const TRI_KEYS = [
+    { keys: ['j', 'ArrowDown'], run: () => moveSel(1) },
+    { keys: ['k', 'ArrowUp'], run: () => moveSel(-1) },
+    { keys: ['Home'], run: () => { const nav = navList(triGroups()); if (nav[0]) selectItem(nav[0].path); } },
+    { keys: ['End'], run: () => { const nav = navList(triGroups()); if (nav.length) selectItem(nav[nav.length - 1].path); } },
+    { keys: ['ArrowRight', ']', 'm'], run: () => cycleCand(1) },
+    { keys: ['ArrowLeft', '['], run: () => cycleCand(-1) },
+    { keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9'], run: (ctx) => pickCand(Number(ctx.key) - 1) },
+    { keys: ['a'], run: () => triApply() },
+    { keys: ['Enter'], run: (ctx) => (ctx.onControl ? false : triApply()) },
+    { keys: ['u'], run: () => triAsis() },
+    { keys: ['s'], run: () => triSkip() },
+    { keys: ['t'], run: () => triToggleTracks() },
+    { keys: ['r'], run: () => triRetag() },
+    { keys: ['o'], run: () => triOpenLink() },
+    { keys: ['d'], run: () => triArchive() },
+    { keys: ['i'], run: () => { const inp = $('#tri-id'); if (inp && !inp.disabled) { inp.focus(); inp.select(); } } },
+    { keys: [DUP_KEYS.keep[0]], run: dupOnly('keep') },
+    { keys: [DUP_KEYS.remove[0]], run: dupOnly('remove') },
+    { keys: [DUP_KEYS.merge[0]], run: dupOnly('merge') },
+    { keys: ['?'], run: () => toggleHelp() },
+    { keys: ['Escape'], run: () => (document.body.classList.contains('tri-sheet-open') ? closeSheet() : false) },
+  ];
+  const TRI_KEYMAP = new Map();
+  for (const binding of TRI_KEYS) {
+    for (const key of binding.keys) {
+      if (TRI_KEYMAP.has(key) || GLOBAL_KEYS.includes(key)) {
+        console.error(`Needledrop: shortcut "${key}" is bound twice`);
+        continue;
+      }
+      TRI_KEYMAP.set(key, binding);
+    }
+  }
+
+  /** Returns true when the key was handled. */
   function triKey(e) {
     if (S.route.tab !== 'inbox' || e.altKey || e.ctrlKey || e.metaKey) return false;
     if (isTypingTarget(e.target) || Menu.el || anyDialogOpen()) return false;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    const it = findItem(S.tri.sel);
-    const dup = it && it.status === 'duplicate';
-    const onControl = e.target && e.target.closest && e.target.closest('button, a, summary, input, select');
-    switch (key) {
-      case 'j': case 'ArrowDown': moveSel(1); break;
-      case 'ArrowUp': moveSel(-1); break;
-      case 'k': if (dup) triApply('keep'); else moveSel(-1); break;
-      case 'Home': { const nav = navList(triGroups()); if (nav[0]) selectItem(nav[0].path); break; }
-      case 'End': { const nav = navList(triGroups()); if (nav.length) selectItem(nav[nav.length - 1].path); break; }
-      case 'ArrowRight': case ']': case 'm': cycleCand(1); break;
-      case 'ArrowLeft': case '[': cycleCand(-1); break;
-      case 'Enter': if (onControl) return false; triApply(); break;
-      case 'a': triApply(); break;
-      case 'u': triAsis(); break;
-      case 's': triSkip(); break;
-      case 't': triToggleTracks(); break;
-      case 'r': triRetag(); break;
-      case 'o': triOpenLink(); break;
-      case 'i': { const inp = $('#tri-id'); if (inp && !inp.disabled) { inp.focus(); inp.select(); } break; }
-      case 'x': if (!dup) return false; triApply('remove'); break;
-      case 'g': if (!dup) return false; triApply('merge'); break;
-      case '?': toggleHelp(); break;
-      case 'Escape': if (document.body.classList.contains('tri-sheet-open')) closeSheet(); else return false; break;
-      default:
-        if (/^[1-9]$/.test(key)) pickCand(Number(key) - 1);
-        else return false;
-    }
-    return true;
+    const binding = TRI_KEYMAP.get(key);
+    if (!binding) return false;
+    const onControl = !!(e.target && e.target.closest && e.target.closest('button, a, summary, input, select'));
+    return binding.run({ key, onControl }) !== false;
   }
 
   /* ===================================================== 8. Log + history */
@@ -2717,6 +2782,8 @@
     'tri-apply': () => triApply(),
     'tri-asis': () => triAsis(),
     'tri-skip': () => triSkip(),
+    'tri-archive': () => triArchive(),
+    'archive-dups': () => archiveDuplicates(),
     'tri-tracks': () => triToggleTracks(),
     'tri-retag': () => triRetag(),
     'tri-dup': (el) => triApply(el.dataset.key),

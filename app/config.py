@@ -34,6 +34,8 @@ class Settings:
     music_dir: Path = Path(_MUSIC)
     downloading_dir: Path = Path(_env("DOWNLOADING_DIR", f"{_MUSIC}/.downloading"))
     inbox_dir: Path = Path(_env("INBOX_DIR", f"{_MUSIC}/inbox"))
+    # Discarded inbox items go here (dated subfolders), never straight to trash.
+    archive_dir: Path = Path(_env("ARCHIVE_DIR", f"{_MUSIC}/archive/needledrop"))
     # Empty = use the `directory` from the beets config.
     library_dir: str = _env("LIBRARY_DIR", "")
 

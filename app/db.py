@@ -87,7 +87,8 @@ def conn() -> sqlite3.Connection:
 
 def _migrate(connection: sqlite3.Connection) -> None:
     columns = {row[1] for row in connection.execute("PRAGMA table_info(inbox)")}
-    for name, kind in (("pending", "TEXT"), ("pending_until", "REAL")):
+    for name, kind in (("pending", "TEXT"), ("pending_until", "REAL"),
+                       ("queued_mode", "TEXT")):
         if name not in columns:
             connection.execute(f"ALTER TABLE inbox ADD COLUMN {name} {kind}")
 
