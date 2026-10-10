@@ -1633,7 +1633,7 @@
     tagging: { candidates: 'Looking up', apply: 'Importing', asis: 'Importing' },
   };
   const statusOf = (it) => {
-    const [label, tone] = statusOf(it);
+    const [label, tone] = INBOX_STATUS[it.status] || [it.status, 'neutral'];
     const busy = BUSY_LABELS[it.status];
     if (it.status === 'pending' && it.pending && it.pending.mode === 'archive') return ['Archiving', tone];
     return [(busy && busy[it.queued_mode]) || label, tone];
