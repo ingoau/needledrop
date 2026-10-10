@@ -160,6 +160,7 @@ async def create_jobs(request: JobRequest):
             if album_tracks is None:
                 album_tracks = 1 if re.search(r"\s-\s(Single|EP)$", item.album or "") else 2
             options["album_track_count"] = album_tracks
+            options["album_id"] = item.album_id
         elif item.type == "album":
             try:
                 detail = await catalog.album(item.id)
@@ -369,7 +370,8 @@ async def inbox_undo(body: UndoRequest):
     row = inbox.undo(body.path)
     if row is None:
         raise HTTPException(409, "Nothing to undo (it may already have been applied)")
-    return {"ok": True, "path": row["path"]}
+    restored = db.query_one("SELECT status FROM inbox WHERE path = ?", (row["path"],))
+    return {"ok": True, "path": row["path"], "status": restored and restored["status"]}
 
 
 def _clean_id(value: str) -> str:

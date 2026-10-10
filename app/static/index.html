@@ -27,12 +27,24 @@
       <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m0 0 6-6m-6 6 6 6"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M17 14v4.5H5.5V7H10"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+      <symbol id="i-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
       <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.2M12 16.8v.2"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.2M12 7.8v.2"/></symbol>
       <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 15V4m0 0L7.8 8.2M12 4l4.2 4.2"/><path d="M4 13.5V19h16v-5.5"/></symbol>
       <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="10.5" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5v3"/></symbol>
       <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.2 1.2"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.2-1.2"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7.5 4.5 12 9 16.5"/><path d="M4.5 12H14a5.5 5.5 0 0 1 0 11h-2" transform="translate(0 -3.5)"/></symbol>
+      <symbol id="i-forget" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4.2h4.2"/><path d="m9.5 9.5 5 5m0-5-5 5"/></symbol>
+      <symbol id="i-open" viewBox="0 0 24 24"><path d="M5 12h13m0 0-5-5m5 5-5 5"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5V18a1.5 1.5 0 0 0 1.5 1.5h14a1.5 1.5 0 0 0 1.5-1.5V9.5A1.5 1.5 0 0 0 19 8h-7l-2-2.5H5A1.5 1.5 0 0 0 3.5 7z"/></symbol>
+      <symbol id="i-skip" viewBox="0 0 24 24"><path d="m6 6 7 6-7 6zM16.5 6v12"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5M5 19h14"/></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7.5 14h9"/></symbol>
     </defs>
   </svg>
 
@@ -124,7 +136,7 @@
             <ol class="jobs" id="jobs" aria-label="Download jobs"></ol>
             <div class="empty small" id="jobs-empty" hidden>
               <svg class="ic" aria-hidden="true"><use href="#i-disc"/></svg>
-              <p>No downloads yet. Pick something on the left and press <strong>Download</strong>.</p>
+              <p>No downloads yet. Pick something and press <strong>Download</strong>.</p>
             </div>
           </div>
         </aside>
@@ -138,16 +150,50 @@
           <h1 id="inbox-heading">Inbox</h1>
           <p class="view-sub" id="inbox-mode"></p>
         </div>
-        <div class="count-chips" id="inbox-counts" aria-label="Items by status"></div>
+        <div class="inbox-tools">
+          <div class="count-chips" id="inbox-counts" aria-label="Items by status"></div>
+          <button type="button" class="btn small ghost" data-act="tri-help" aria-haspopup="dialog">
+            <svg class="ic" aria-hidden="true"><use href="#i-keyboard"/></svg> Keys <kbd>?</kbd>
+          </button>
+        </div>
       </div>
-      <div class="chips" id="inbox-filters" role="group" aria-label="Show">
-        <button type="button" class="chip" data-act="inbox-filter" data-filter="needs" aria-pressed="false">Needs review <span class="n"></span></button>
-        <button type="button" class="chip" data-act="inbox-filter" data-filter="progress" aria-pressed="false">In progress <span class="n"></span></button>
-        <button type="button" class="chip" data-act="inbox-filter" data-filter="applied" aria-pressed="false" title="Imported during the last 24 hours">Applied <span class="n"></span></button>
-        <button type="button" class="chip" data-act="inbox-filter" data-filter="all" aria-pressed="false">All <span class="n"></span></button>
+
+      <div class="triage" id="triage">
+        <div class="queue-pane">
+          <div class="queue" id="tri-queue" role="listbox" tabindex="0" aria-label="Inbox queue, sorted by match">
+            <div class="q-group" id="qg-pending" role="group" aria-labelledby="qh-pending" hidden>
+              <h2 class="q-head" id="qh-pending">Applying <span class="q-count"></span></h2>
+              <ul class="q-list" id="ql-pending" role="presentation"></ul>
+            </div>
+            <div class="q-group" id="qg-needs" role="group" aria-labelledby="qh-needs" hidden>
+              <h2 class="q-head" id="qh-needs">Needs review <span class="q-count"></span></h2>
+              <ul class="q-list" id="ql-needs" role="presentation"></ul>
+            </div>
+            <div class="q-group" id="qg-progress" role="group" aria-labelledby="qh-progress" hidden>
+              <h2 class="q-head" id="qh-progress">In progress <span class="q-count"></span></h2>
+              <ul class="q-list" id="ql-progress" role="presentation"></ul>
+            </div>
+            <div class="q-group" id="qg-applied" role="group" aria-labelledby="qh-applied" hidden>
+              <h2 class="q-head">
+                <button type="button" class="q-toggle" id="qh-applied" data-act="tri-applied" aria-expanded="false">
+                  <svg class="ic chev" aria-hidden="true"><use href="#i-chevron"/></svg> Imported · 24h <span class="q-count"></span>
+                </button>
+              </h2>
+              <ul class="q-list" id="ql-applied" role="presentation"></ul>
+            </div>
+          </div>
+          <div class="q-zero" id="q-zero" hidden></div>
+        </div>
+        <div class="tri-detail-pane" id="tri-pane">
+          <div id="tri-detail"></div>
+          <div class="tri-empty" id="tri-empty" hidden></div>
+        </div>
       </div>
-      <div class="icards" id="inbox-list"></div>
-      <div class="empty" id="inbox-empty" hidden></div>
+
+      <div class="tri-hint" id="tri-hint" hidden>
+        <div class="tri-hint-keys" id="tri-hint-keys" aria-hidden="true"></div>
+        <button type="button" class="btn tiny ghost" data-act="tri-help" aria-haspopup="dialog">All keys <kbd>?</kbd></button>
+      </div>
     </section>
 
     <!-- ============================================================ Log -->
@@ -158,6 +204,24 @@
           <p class="view-sub" id="log-sub">The latest 300 events. Older entries are pruned automatically.</p>
         </div>
       </div>
+
+      <section class="panel hist-panel" aria-labelledby="hist-heading">
+        <div class="hist-head">
+          <div class="hist-titles">
+            <h2 id="hist-heading">Download history</h2>
+            <p class="muted">Tracks already ripped. Later downloads skip them unless you choose <em>Download again</em> or <em>Forget download</em>.</p>
+          </div>
+          <div class="hist-import">
+            <input type="file" id="hist-file" data-change="hist-import" accept=".sqlite3,.sqlite,.db,application/x-sqlite3,application/vnd.sqlite3" hidden>
+            <button type="button" class="btn small" data-act="hist-pick" id="hist-pick">
+              <svg class="ic" aria-hidden="true"><use href="#i-upload"/></svg> Import history…
+            </button>
+          </div>
+        </div>
+        <div class="hist-stats" id="hist-stats" aria-live="polite"></div>
+        <p class="hist-hint">Import accepts apple-music-to-flac's <span class="mono">download-history.sqlite3</span> or gamdl's database file (the one set with <span class="mono">--database-path</span>). Tracks that are already known are left as they are.</p>
+      </section>
+
       <div class="log-tools">
         <div class="chips" id="log-filters" role="group" aria-label="Event kind">
           <button type="button" class="chip" data-act="log-kind" data-kind="" aria-pressed="true">All</button>
@@ -183,7 +247,7 @@
       <div class="sel-info">
         <div class="sel-art" id="sel-art" aria-hidden="true"></div>
         <div>
-          <div class="sel-count"><strong id="sel-count">0</strong> <span id="sel-noun">selected</span></div>
+          <div class="sel-count"><strong id="sel-count">0</strong> selected</div>
           <div class="sel-kinds" id="sel-kinds"></div>
         </div>
       </div>
@@ -211,6 +275,56 @@
       <div class="dialog-actions">
         <button class="btn ghost" value="cancel" autofocus>Cancel</button>
         <button class="btn danger" value="ok" id="cd-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog keys-dialog" id="keys-dialog" aria-labelledby="keys-title">
+    <form method="dialog">
+      <div class="keys-head">
+        <h2 id="keys-title">Inbox keys</h2>
+        <button class="icon-btn" value="close" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="keys-grid">
+        <section>
+          <h3>Move</h3>
+          <dl>
+            <dt><kbd>j</kbd> <kbd>↓</kbd></dt><dd>Next item</dd>
+            <dt><kbd>k</kbd> <kbd>↑</kbd></dt><dd>Previous item (<kbd>↑</kbd> only on duplicates)</dd>
+            <dt><kbd>→</kbd> <kbd>]</kbd> <kbd>m</kbd></dt><dd>Next candidate (more candidates)</dd>
+            <dt><kbd>←</kbd> <kbd>[</kbd></dt><dd>Previous candidate</dd>
+            <dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Show candidate N</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Decide</h3>
+          <dl>
+            <dt><kbd>a</kbd> <kbd>Enter</kbd></dt><dd>Apply the shown candidate</dd>
+            <dt><kbd>u</kbd></dt><dd>Use as-is (keep the files' tags)</dd>
+            <dt><kbd>s</kbd></dt><dd>Skip for now</dd>
+            <dt><kbd>t</kbd></dt><dd>Re-look up as single tracks / as an album</dd>
+            <dt><kbd>i</kbd></dt><dd>Enter a MusicBrainz or Spotify ID</dd>
+            <dt><kbd>r</kbd></dt><dd>Re-run the tagger</dd>
+            <dt><kbd>o</kbd></dt><dd>Open the candidate's page</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Duplicates</h3>
+          <dl>
+            <dt><kbd>k</kbd></dt><dd>Keep both</dd>
+            <dt><kbd>x</kbd></dt><dd>Replace the old copy</dd>
+            <dt><kbd>g</kbd></dt><dd>Merge into the existing album</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Anywhere</h3>
+          <dl>
+            <dt><kbd id="keys-undo">Ctrl Z</kbd></dt><dd>Undo the latest apply (within the undo window)</dd>
+            <dt><kbd>Shift F10</kbd></dt><dd>Context menu for the focused item</dd>
+            <dt><kbd>?</kbd></dt><dd>This help</dd>
+            <dt><kbd>Esc</kbd></dt><dd>Close help, menus or the item sheet</dd>
+          </dl>
+        </section>
       </div>
     </form>
   </dialog>
