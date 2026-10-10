@@ -96,8 +96,10 @@ async def artist(artist_id: str):
 @app.get("/api/album/{album_id}")
 async def album(album_id: str):
     data = await _catalog_call(catalog.album, album_id)
-    history.annotate([data["album"]])
     history.annotate(data["tracks"])
+    # Count from the tracklist: a track may be in the history under another
+    # release's album id (e.g. ripped from a single first).
+    data["album"]["history_tracks"] = sum(1 for t in data["tracks"] if t.get("in_history"))
     return data
 
 
