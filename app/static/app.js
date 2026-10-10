@@ -2320,6 +2320,15 @@
     };
   }
 
+  /** Point at the best candidate that would take every file, if any. */
+  function coversAll(task, c) {
+    const cands = (task && task.candidates) || [];
+    const i = cands.findIndex((x) => x !== c && x.kind === 'album' && !x.extra_items);
+    if (i < 0) return '';
+    const x = cands[i];
+    return html`<p class="diff-hint">${icon('info')} Candidate ${i + 1}, <strong>${x.artist} – ${x.title}</strong>${x.disambig ? html` <span class="muted">(${x.disambig.split(', ').filter((p) => p && p !== 'None').slice(1, 4).join(', ')})</span>` : ''} at ${pctText(x.similarity)}, includes every file${x.missing_tracks ? ` (${plural(x.missing_tracks, 'track')} you don't have)` : ''}. ${i < 9 ? html`Press <kbd>${i + 1}</kbd> to see it.` : ''}</p>`;
+  }
+
   function diffHTML(it, task, c) {
     const cur = task.current || {};
     const isAlbum = c.kind === 'album';
@@ -2350,7 +2359,8 @@
           </div>
           <ol class="dtracks">${rows.filter((r) => r.changed || show || !changed).map((r) => r.html)}</ol>` : ''}
         ${extra.length ? html`
-          <div class="diff-sub warnish"><h4>${icon('warn')} Files without a match</h4><span class="muted">${plural(extra.length, 'file')} — left out unless you import as-is</span></div>
+          <div class="diff-sub warnish"><h4>${icon('warn')} Not on this release</h4><span class="muted">${plural(extra.length, 'file')} — applying imports the rest; ${extra.length === 1 ? 'this one stays' : 'these stay'} in the inbox as a separate item</span></div>
+          ${coversAll(task, c)}
           <ul class="dlist">${extra.map((x) => html`<li><span class="tnum">(#${x.track || '?'})</span> ${x.title || html`<em>untitled</em>`} <span class="tlen">(${fmtDur(x.length) || '?:??'})</span> <span class="tfile mono">${x.file}</span></li>`)}</ul>` : ''}
         ${missing.length ? html`
           <div class="diff-sub warnish"><h4>${icon('warn')} Missing from your files</h4><span class="muted">${plural(missing.length, 'track')} on this release</span></div>

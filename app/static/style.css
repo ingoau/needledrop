@@ -2109,3 +2109,6 @@ a.card-title:hover, a.job-title:hover { color: var(--link); text-decoration: und
 @media (pointer: coarse) {
   .tri-btns kbd, .apple-btns kbd, .dup-row kbd, .id-kbd { display: none; }
 }
+.diff-hint { display: flex; gap: 8px; align-items: baseline; margin: 0; padding: 10px 18px; color: var(--muted); font-size: 0.9em; border-top: 1px solid var(--line); }
+.diff-hint .ic { flex: none; align-self: center; color: var(--info); }
+.diff-hint strong { color: var(--text); font-weight: 600; }
