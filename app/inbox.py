@@ -174,8 +174,11 @@ class Inbox:
             if action.get("mode") in ("apply", "asis"):
                 # Whoever applied it, an undo means: don't auto-apply this content.
                 report["auto_undone"] = True
-            db.update("inbox", "path", r["path"], status=_status_from_report(report),
-                      report=json.dumps(report), pending=None, pending_until=None)
+            # Never looked up yet: back to the queue rather than an empty review.
+            status = _status_from_report(report) if report.get("tasks") else "waiting"
+            db.update("inbox", "path", r["path"], status=status,
+                      report=json.dumps(report) if report else None,
+                      pending=None, pending_until=None)
         what = json.loads(row["pending"] or "{}").get("mode", "apply")
         db.log("info", "tagger",
                f"Undone {what}: " + (
