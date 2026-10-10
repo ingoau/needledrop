@@ -215,7 +215,7 @@ class NeedledropSession(importer.ImportSession):
 
 
 def _track_imports(session: NeedledropSession):
-    def on_album(lib, album):
+    def on_album(lib, album, **_):
         session.imported.append({
             "kind": "album",
             "id": album.id,
@@ -223,7 +223,7 @@ def _track_imports(session: NeedledropSession):
             "paths": [displayable_path(i.path) for i in album.items()],
         })
 
-    def on_item(lib, item):
+    def on_item(lib, item, **_):
         session.imported.append({
             "kind": "item",
             "id": item.id,
@@ -231,8 +231,9 @@ def _track_imports(session: NeedledropSession):
             "paths": [displayable_path(item.path)],
         })
 
-    plugins.register_listener("album_imported", on_album)
-    plugins.register_listener("item_imported", on_item)
+    listeners = plugins.BeetsPlugin.listeners
+    listeners["album_imported"].append(on_album)
+    listeners["item_imported"].append(on_item)
 
 
 def needledrop_import(lib, opts, args):
