@@ -76,17 +76,43 @@ def _album_candidate(match: AlbumMatch) -> dict[str, Any]:
         "missing_tracks": len(match.extra_tracks),
         "url": _source_url(info.get("data_source"), info.get("album_id"), "album"),
         "tracks": [
-            {
-                "item": displayable_path(item.path).rsplit("/", 1)[-1],
-                "item_title": item.title,
-                "title": track.get("title"),
-                "index": track.get("index"),
-                "length": _num(track.get("length")),
-            }
+            _track_pair(item, track)
             for item, track in sorted(
                 match.mapping.items(), key=lambda pair: pair[1].get("index") or 0
             )
         ],
+        "extra_items_list": [
+            {"file": _filename(item), "title": item.title, "track": item.track,
+             "length": _num(item.length)}
+            for item in match.extra_items
+        ],
+        "missing_tracks_list": [
+            {"title": track.get("title"), "index": track.get("index"),
+             "length": _num(track.get("length"))}
+            for track in match.extra_tracks
+        ],
+    }
+
+
+def _filename(item) -> str:
+    return displayable_path(item.path).rsplit("/", 1)[-1]
+
+
+def _track_pair(item, track) -> dict[str, Any]:
+    """One file and the track it would become, for the diff view."""
+    return {
+        "item": _filename(item),
+        "item_title": item.title,
+        "item_artist": item.artist,
+        "item_track": item.track,
+        "item_disc": item.disc,
+        "item_length": _num(item.length),
+        "title": track.get("title"),
+        "artist": track.get("artist"),
+        "index": track.get("index"),
+        "medium": track.get("medium"),
+        "medium_index": track.get("medium_index"),
+        "length": _num(track.get("length")),
     }
 
 
@@ -105,9 +131,11 @@ def _track_candidate(match: TrackMatch) -> dict[str, Any]:
         "title": info.get("title"),
         "album": info.get("album"),
         "year": info.get("year"),
+        "length": _num(info.get("length")),
         "data_source": info.get("data_source"),
         "disambig": match.disambig_string,
         "url": _source_url(info.get("data_source"), info.get("track_id"), "track"),
+        "tracks": [_track_pair(match.item, info)],
     }
 
 
@@ -120,6 +148,26 @@ def _source_url(source: str | None, ident: str | None, kind: str) -> str | None:
     if source == "Spotify":
         return f"https://open.spotify.com/{kind}/{ident}"
     return None
+
+
+def _current(task) -> dict[str, Any]:
+    """The files' existing tags, the left-hand side of the diff."""
+    items = list(task.items) if task.is_album else [task.item]
+    first = items[0] if items else None
+
+    def common(field: str):
+        values = {getattr(i, field, None) for i in items}
+        return values.pop() if len(values) == 1 else None
+
+    return {
+        "artist": common("albumartist") or common("artist") if task.is_album
+        else getattr(first, "artist", None),
+        "album": common("album"),
+        "title": None if task.is_album else getattr(first, "title", None),
+        "year": common("year"),
+        "label": common("label"),
+        "track_count": len(items),
+    }
 
 
 class NeedledropSession(importer.ImportSession):
@@ -147,6 +195,7 @@ class NeedledropSession(importer.ImportSession):
                 "cur_album": getattr(task, "cur_album", None)
                 if is_album else task.item.title,
                 "recommendation": rec.name if (rec := getattr(task, "rec", None)) is not None else None,
+                "current": _current(task),
                 "candidates": [],
                 "decision": None,
                 "chosen": None,

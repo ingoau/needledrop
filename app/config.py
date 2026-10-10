@@ -58,6 +58,8 @@ class Settings:
     beet_plugins: str = _env("BEET_PLUGINS", "/opt/needledrop/beets/beetsplug")
     auto_apply: bool = _env_bool("AUTO_APPLY", True)
     tagger_buffer_seconds: int = _env_int("TAGGER_BUFFER_SECONDS", 30)
+    # Applies (manual or automatic) wait this long so they can be undone.
+    undo_seconds: int = _env_int("UNDO_SECONDS", 10)
     inbox_scan_seconds: int = _env_int("INBOX_SCAN_SECONDS", 10)
 
     log_retention_days: int = _env_int("LOG_RETENTION_DAYS", 30)

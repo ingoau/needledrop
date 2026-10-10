@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS inbox (
     last_change REAL NOT NULL,
     fingerprint TEXT NOT NULL,
     analyzed_fingerprint TEXT,
-    status TEXT NOT NULL,          -- waiting | queued | tagging | review | duplicate | error | applied
+    status TEXT NOT NULL,          -- waiting | queued | tagging | review | duplicate | pending | error | applied
     artist TEXT,
     album TEXT,
     track_count INTEGER,
@@ -81,7 +81,15 @@ def conn() -> sqlite3.Connection:
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(SCHEMA)
+        _migrate(_conn)
     return _conn
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(inbox)")}
+    for name, kind in (("pending", "TEXT"), ("pending_until", "REAL")):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE inbox ADD COLUMN {name} {kind}")
 
 
 def execute(sql: str, params: tuple | dict = ()) -> sqlite3.Cursor:

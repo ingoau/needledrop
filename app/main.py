@@ -288,25 +288,26 @@ async def history_forget(body: ForgetRequest):
 
 @app.get("/api/inbox")
 async def list_inbox():
-    rows = db.query(
-        "SELECT * FROM inbox ORDER BY "
-        "CASE status WHEN 'tagging' THEN 0 WHEN 'duplicate' THEN 1 "
-        "WHEN 'review' THEN 2 WHEN 'error' THEN 3 WHEN 'queued' THEN 4 "
-        "WHEN 'waiting' THEN 5 ELSE 6 END, last_change DESC"
-    )
+    rows = db.query("SELECT * FROM inbox")
     root = str(settings.inbox_dir).rstrip("/") + "/"
     for row in rows:
         report = json.loads(row.pop("report") or "null") or {}
         row["relpath"] = row["path"][len(root):] if row["path"].startswith(root) else row["path"]
-        row["tasks"] = [
-            {k: v for k, v in task.items()} for task in report.get("tasks") or []
-        ]
+        row["tasks"] = report.get("tasks") or []
         row["imported"] = report.get("imported") or []
         row["mode"] = report.get("mode")
+        row["auto_undone"] = bool(report.get("auto_undone"))
+        row["pending"] = json.loads(row["pending"]) if row.get("pending") else None
+        best = next((t["candidates"][0] for t in row["tasks"] if t.get("candidates")), None)
+        row["best_similarity"] = best["similarity"] if best else None
         if row["status"] == "error":
             row["stderr"] = report.get("stderr")
             row["report_error"] = report.get("error")
-    return {"items": rows}
+    # Triage order: highest match first, unmatched last.
+    rows.sort(key=lambda r: (
+        r["best_similarity"] is None, -(r["best_similarity"] or 0), -r["last_change"]
+    ))
+    return {"items": rows, "undo_seconds": settings.undo_seconds}
 
 
 class InboxAction(BaseModel):
@@ -322,19 +323,23 @@ async def inbox_action(body: InboxAction):
     row = db.query_one("SELECT * FROM inbox WHERE path = ?", (body.path,))
     if row is None:
         raise HTTPException(404, "Not in the inbox")
-    if row["status"] in ("queued", "tagging"):
+    if row["status"] in ("queued", "tagging", "pending"):
         raise HTTPException(409, "Already being tagged")
     if body.duplicate_action not in ("skip", "keep", "remove", "merge"):
         raise HTTPException(400, "Bad duplicate action")
 
+    result: dict[str, Any] = {"ok": True}
     if body.action == "apply":
         if not body.candidate:
             raise HTTPException(400, "candidate is required")
-        inbox.enqueue(body.path, "apply", manual=True, candidate=body.candidate,
-                      duplicate_action=body.duplicate_action)
+        result["pending_until"] = inbox.schedule(body.path, {
+            "mode": "apply", "candidate": body.candidate,
+            "duplicate_action": body.duplicate_action,
+        })
     elif body.action == "asis":
-        inbox.enqueue(body.path, "asis", manual=True,
-                      duplicate_action=body.duplicate_action)
+        result["pending_until"] = inbox.schedule(body.path, {
+            "mode": "asis", "duplicate_action": body.duplicate_action,
+        })
     elif body.action == "search":
         search_id = _clean_id(body.search_id or "")
         if not search_id:
@@ -352,7 +357,19 @@ async def inbox_action(body: InboxAction):
     db.log("info", "inbox", f"Requested {body.action}: {row['artist']} / {row['album']}",
            ref=body.path,
            details={k: v for k, v in body.model_dump().items() if v and k != "path"})
-    return {"ok": True}
+    return result
+
+
+class UndoRequest(BaseModel):
+    path: str | None = None  # default: the most recent pending action
+
+
+@app.post("/api/inbox/undo")
+async def inbox_undo(body: UndoRequest):
+    row = inbox.undo(body.path)
+    if row is None:
+        raise HTTPException(409, "Nothing to undo (it may already have been applied)")
+    return {"ok": True, "path": row["path"]}
 
 
 def _clean_id(value: str) -> str:

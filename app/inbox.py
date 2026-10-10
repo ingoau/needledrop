@@ -100,6 +100,7 @@ class TagRequest:
     duplicate_action: str = field(compare=False, default="skip")
     singletons: bool = field(compare=False, default=False)
     manual: bool = field(compare=False, default=False)
+    auto: bool = field(compare=False, default=False)  # may schedule an auto-apply
 
 
 class Inbox:
@@ -114,7 +115,7 @@ class Inbox:
     def enqueue(self, path: str, mode: str, *, manual: bool = False,
                 candidate: str | None = None, search_id: str | None = None,
                 duplicate_action: str = "skip",
-                singletons: bool | None = None) -> None:
+                singletons: bool | None = None, auto: bool = False) -> None:
         row = db.query_one("SELECT * FROM inbox WHERE path = ?", (path,))
         if row is None:
             raise KeyError(path)
@@ -132,8 +133,59 @@ class Inbox:
                 duplicate_action=duplicate_action,
                 singletons=singletons,
                 manual=manual,
+                auto=auto,
             )
         )
+
+    # -- undoable actions: held for a few seconds before beets runs
+
+    def schedule(self, path: str, action: dict[str, Any]) -> float:
+        """Queue an apply/as-is that can still be undone for UNDO_SECONDS."""
+        until = time.time() + settings.undo_seconds
+        db.update("inbox", "path", path, status="pending",
+                  pending=json.dumps(action), pending_until=until, error=None)
+        return until
+
+    def undo(self, path: str | None = None) -> dict[str, Any] | None:
+        if path is None:
+            row = db.query_one(
+                "SELECT * FROM inbox WHERE status = 'pending' "
+                "ORDER BY pending_until DESC LIMIT 1"
+            )
+        else:
+            row = db.query_one(
+                "SELECT * FROM inbox WHERE path = ? AND status = 'pending'", (path,)
+            )
+        if row is None:
+            return None
+        action = json.loads(row["pending"] or "{}")
+        report = json.loads(row["report"] or "{}")
+        if action.get("auto"):
+            # Don't auto-apply this exact content again.
+            report["auto_undone"] = True
+        db.update("inbox", "path", row["path"], status=_status_from_report(report),
+                  report=json.dumps(report), pending=None, pending_until=None)
+        db.log("info", "tagger",
+               f"Undone {action.get('mode', 'apply')}: {_label(row['artist'], row['album'])}",
+               ref=row["path"])
+        return row
+
+    async def _pending_loop(self) -> None:
+        while True:
+            await asyncio.sleep(0.5)
+            now = time.time()
+            for row in db.query(
+                "SELECT * FROM inbox WHERE status = 'pending' AND pending_until <= ?",
+                (now,),
+            ):
+                action = json.loads(row["pending"] or "{}")
+                db.update("inbox", "path", row["path"], pending=None, pending_until=None)
+                self.enqueue(
+                    row["path"], action.get("mode", "apply"),
+                    manual=True,
+                    candidate=action.get("candidate"),
+                    duplicate_action=action.get("duplicate_action", "skip"),
+                )
 
     def poke(self) -> None:
         self._rescan_needed.set()
@@ -141,7 +193,7 @@ class Inbox:
     # -- background loops
 
     async def run(self) -> None:
-        await asyncio.gather(self._scan_loop(), self._tag_loop())
+        await asyncio.gather(self._scan_loop(), self._tag_loop(), self._pending_loop())
 
     async def _scan_loop(self) -> None:
         # Anything left mid-flight by a restart goes back through the buffer.
@@ -218,8 +270,8 @@ class Inbox:
                     db.update("inbox", "path", row["path"],
                               status=_status_from_report(report))
                     continue
-            mode = "auto" if settings.auto_apply else "candidates"
-            self.enqueue(row["path"], mode)
+            # Look up first; a strong match is then applied after the undo window.
+            self.enqueue(row["path"], "candidates", auto=True)
 
         db.prune_events()
 
@@ -291,12 +343,34 @@ class Inbox:
             )
             return
 
+        if request.mode in ("apply", "asis") and row["report"]:
+            # Keep the full candidate list from the lookup; only take over
+            # what the attempt learned (duplicates, errors).
+            previous = json.loads(row["report"])
+            for old, new in zip(previous.get("tasks") or [], tasks):
+                for key in ("duplicates", "duplicate_action", "chosen", "error"):
+                    if new.get(key):
+                        old[key] = new[key]
+            previous["last_action"] = request.mode
+            report, tasks = previous, previous.get("tasks") or []
+
         status = _status_from_report(report)
         db.update("inbox", "path", request.path, status=status,
                   report=json.dumps(report), error=None,
                   analyzed_fingerprint=fingerprint)
 
         best = _best_candidate(tasks)
+        if (request.auto and settings.auto_apply and status == "review"
+                and best and _strong_but_unapplied(report)):
+            self.schedule(request.path, {
+                "mode": "apply", "candidate": best["id"], "auto": True,
+            })
+            db.log("info", "tagger",
+                   f"Strong match ({round(best['similarity'] * 100, 1)}%), applying in "
+                   f"{settings.undo_seconds}s unless undone: {label} → "
+                   f"{best.get('artist')} - {best.get('title')}",
+                   ref=request.path, details={"candidate": best})
+            return
         if request.mode == "candidates" and request.search_id:
             found = len(best and [best] or [])
             db.log("info", "tagger",
@@ -392,7 +466,7 @@ def _status_from_report(report: dict[str, Any]) -> str:
 
 def _strong_but_unapplied(report: dict[str, Any]) -> bool:
     """A look-only verdict (auto-apply was off) that auto-apply would take."""
-    return report.get("mode") == "candidates" and any(
+    return report.get("mode") == "candidates" and not report.get("auto_undone") and any(
         task.get("recommendation") == "strong" and not task.get("duplicates")
         for task in report.get("tasks") or []
     )
