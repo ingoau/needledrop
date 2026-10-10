@@ -2125,7 +2125,7 @@
     try {
       const r = await api('api/inbox/redownload', { method: 'POST', body: { path, which } });
       toast(which === 'missing'
-        ? `Downloading ${plural(r.tracks, 'missing track')} — it lands back in this folder.`
+        ? `Downloading ${plural(r.tracks, 'missing song')} — it lands back in this folder.`
         : `Re-downloading ${plural(r.tracks, 'track')} — the new copies replace these files.`, 'success', 5000,
       { action: { label: 'Show job', run: () => go('#download') } });
       jobsPoller.kick();
@@ -2147,12 +2147,16 @@
         <div class="apple-info">
           <p class="apple-title"><strong>${a.name}</strong> — ${a.artist}${a.year ? html` <span class="muted">${a.year}</span>` : ''}</p>
           <p class="muted small">${d.missing == null
-            ? `${plural(d.files, 'file')} here, ${plural(d.tracks, 'track')} on Apple Music (some files have no song id, so missing tracks can't be worked out)`
+            ? `${plural(d.files, 'file')} here, ${plural(d.tracks, 'song')} on Apple Music (some files have no song id, so missing songs can't be worked out)`
             : missing.length
-              ? html`${here} of ${d.tracks} tracks here · missing: ${missing.slice(0, 4).map((t) => t.name).join(', ')}${missing.length > 4 ? ` and ${missing.length - 4} more` : ''}`
-              : `All ${d.tracks} tracks are here`}</p>
+              ? html`${here} of ${plural(d.tracks, 'song')} here · missing: ${missing.slice(0, 4).map((t) => t.name).join(', ')}${missing.length > 4 ? ` and ${missing.length - 4} more` : ''}`
+              : `All ${plural(d.tracks, 'song')} are here`}</p>
+          ${d.videos || d.unavailable ? html`<p class="muted small">${[
+            d.videos ? `Also on the release: ${plural(d.videos, 'music video')}, which Needledrop doesn't download.` : '',
+            d.unavailable ? `${plural(d.unavailable, 'song')} can't be streamed in your country.` : '',
+          ].filter(Boolean).join(' ')}</p>` : ''}
           <div class="apple-btns">
-            ${missing.length ? html`<button type="button" class="btn small primary" data-act="tri-redl" data-key="missing">${icon('download')} Download ${plural(missing.length, 'missing track')}</button>` : ''}
+            ${missing.length ? html`<button type="button" class="btn small primary" data-act="tri-redl" data-key="missing">${icon('download')} Download ${plural(missing.length, 'missing song')}</button>` : ''}
             <button type="button" class="btn small" data-act="tri-redl" data-key="album">${icon('refresh')} Re-download album</button>
             <a class="btn small ghost" href="${viewHash('album', a.id)}">${icon('open')} Open album</a>
           </div>

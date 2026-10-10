@@ -407,6 +407,9 @@ async def inbox_apple(path: str):
         **found,
         "album": detail["album"],
         "tracks": len(songs),
+        # Music videos and unavailable songs are never downloaded; say so.
+        "videos": sum(1 for t in detail["tracks"] if t["type"] != "song"),
+        "unavailable": sum(1 for t in detail["tracks"] if t["type"] == "song" and not t["streamable"]),
         # Only trustworthy when every file told us its song id.
         "missing": missing if not found["files_without_id"] else None,
     }
