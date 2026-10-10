@@ -53,38 +53,38 @@ def _album_candidate(match: AlbumMatch) -> dict[str, Any]:
     info = match.info
     dist = match.distance
     return {
-        "id": info.album_id,
+        "id": info.get("album_id"),
         "kind": "album",
         "similarity": _num(1 - float(dist)),
         "distance": _num(float(dist)),
         "penalties": [
             {"name": key, "weight": _num(value)} for key, value in dist.items()
         ],
-        "artist": info.artist,
-        "title": info.album,
-        "year": info.year,
-        "data_source": info.data_source,
-        "media": info.media,
-        "mediums": info.mediums,
-        "label": info.label,
-        "country": info.country,
-        "albumdisambig": info.albumdisambig,
+        "artist": info.get("artist"),
+        "title": info.get("album"),
+        "year": info.get("year"),
+        "data_source": info.get("data_source"),
+        "media": info.get("media"),
+        "mediums": info.get("mediums"),
+        "label": info.get("label"),
+        "country": info.get("country"),
+        "albumdisambig": info.get("albumdisambig"),
         "disambig": match.disambig_string,
-        "track_count": len(info.tracks or []),
+        "track_count": len(info.get("tracks") or []),
         "matched": len(match.mapping),
         "extra_items": len(match.extra_items),
         "missing_tracks": len(match.extra_tracks),
-        "url": _source_url(info.data_source, info.album_id, "album"),
+        "url": _source_url(info.get("data_source"), info.get("album_id"), "album"),
         "tracks": [
             {
                 "item": displayable_path(item.path).rsplit("/", 1)[-1],
                 "item_title": item.title,
-                "title": track.title,
-                "index": track.index,
-                "length": _num(track.length),
+                "title": track.get("title"),
+                "index": track.get("index"),
+                "length": _num(track.get("length")),
             }
             for item, track in sorted(
-                match.mapping.items(), key=lambda pair: pair[1].index or 0
+                match.mapping.items(), key=lambda pair: pair[1].get("index") or 0
             )
         ],
     }
@@ -94,20 +94,20 @@ def _track_candidate(match: TrackMatch) -> dict[str, Any]:
     info = match.info
     dist = match.distance
     return {
-        "id": info.track_id,
+        "id": info.get("track_id"),
         "kind": "track",
         "similarity": _num(1 - float(dist)),
         "distance": _num(float(dist)),
         "penalties": [
             {"name": key, "weight": _num(value)} for key, value in dist.items()
         ],
-        "artist": info.artist,
-        "title": info.title,
-        "album": info.album,
-        "year": info.year,
-        "data_source": info.data_source,
+        "artist": info.get("artist"),
+        "title": info.get("title"),
+        "album": info.get("album"),
+        "year": info.get("year"),
+        "data_source": info.get("data_source"),
         "disambig": match.disambig_string,
-        "url": _source_url(info.data_source, info.track_id, "track"),
+        "url": _source_url(info.get("data_source"), info.get("track_id"), "track"),
     }
 
 

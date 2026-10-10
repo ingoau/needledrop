@@ -246,10 +246,12 @@ class Inbox:
             if now - row["last_change"] < settings.tagger_buffer_seconds:
                 continue
             if row["analyzed_fingerprint"] == row["fingerprint"] and row["report"]:
-                # Nothing changed since the last verdict; restore it.
-                db.update("inbox", "path", row["path"],
-                          status=_status_from_report(json.loads(row["report"])))
-                continue
+                report = json.loads(row["report"])
+                if not (settings.auto_apply and _strong_but_unapplied(report)):
+                    # Nothing changed since the last verdict; restore it.
+                    db.update("inbox", "path", row["path"],
+                              status=_status_from_report(report))
+                    continue
             mode = "auto" if settings.auto_apply else "candidates"
             self.enqueue(row["path"], mode)
 
@@ -450,6 +452,14 @@ def _status_from_report(report: dict[str, Any]) -> str:
         if task.get("duplicates") and task.get("duplicate_action") == "skip":
             return "duplicate"
     return "review"
+
+
+def _strong_but_unapplied(report: dict[str, Any]) -> bool:
+    """A look-only verdict (auto-apply was off) that auto-apply would take."""
+    return report.get("mode") == "candidates" and any(
+        task.get("recommendation") == "strong" and not task.get("duplicates")
+        for task in report.get("tasks") or []
+    )
 
 
 def _best_candidate(tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
