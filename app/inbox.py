@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from . import db
 from .config import AUDIO_EXTENSIONS, settings
 
@@ -133,7 +131,6 @@ class Inbox:
         self._seq = itertools.count()
         self.current: str | None = None
         self._rescan_needed = asyncio.Event()
-        self._navidrome_pending = False
         self.rip_active = False
 
     # -- public API used by the web layer
@@ -323,7 +320,6 @@ class Inbox:
                 analyzed_fingerprint=None if remaining else fingerprint,
                 last_change=time.time(),
             )
-            await self._rescan_navidrome()
             return
 
         status = _status_from_report(report)
@@ -360,35 +356,6 @@ class Inbox:
     def _after_import(self, path: str) -> None:
         if not _has_audio(path):
             _remove_empty_dirs(path)
-
-    async def _rescan_navidrome(self) -> None:
-        if not (settings.navidrome_url and settings.navidrome_user):
-            return
-        if self._navidrome_pending:
-            return
-        self._navidrome_pending = True
-
-        async def later() -> None:
-            await asyncio.sleep(15)
-            self._navidrome_pending = False
-            try:
-                async with httpx.AsyncClient(timeout=20) as client:
-                    response = await client.get(
-                        settings.navidrome_url.rstrip("/") + "/rest/startScan.view",
-                        params={
-                            "u": settings.navidrome_user,
-                            "p": settings.navidrome_password,
-                            "v": "1.16.1",
-                            "c": "needledrop",
-                            "f": "json",
-                        },
-                    )
-                    response.raise_for_status()
-                db.log("info", "system", "Asked Navidrome to rescan")
-            except Exception as exc:
-                db.log("warning", "system", f"Navidrome rescan failed: {exc}")
-
-        asyncio.create_task(later())
 
 
 # ---------------------------------------------------------------- beets

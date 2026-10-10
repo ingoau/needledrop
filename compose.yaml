@@ -21,7 +21,6 @@ services:
       WRAPPER_URL: http://wrapper:80
       WRAPPER_DECRYPT_HOST: wrapper
       WRAPPER_DECRYPT_PORT: "10020"
-      NAVIDROME_URL: ${NAVIDROME_URL:-http://navidrome:4533}
     volumes:
       - ./data:/data
       # Same paths as on the host: the beets config and library.db use

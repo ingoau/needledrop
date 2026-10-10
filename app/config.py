@@ -65,11 +65,6 @@ class Settings:
     tagger_buffer_seconds: int = _env_int("TAGGER_BUFFER_SECONDS", 30)
     inbox_scan_seconds: int = _env_int("INBOX_SCAN_SECONDS", 10)
 
-    # Optional Navidrome rescan after something reaches the library
-    navidrome_url: str = _env("NAVIDROME_URL", "")
-    navidrome_user: str = _env("NAVIDROME_USER", "")
-    navidrome_password: str = _env("NAVIDROME_PASSWORD", "")
-
     log_retention_days: int = _env_int("LOG_RETENTION_DAYS", 30)
 
     @property

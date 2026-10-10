@@ -1,1 +1,218 @@
-<!doctype html><title>Needledrop</title>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#151310" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#efe8dc" media="(prefers-color-scheme: light)">
+  <title>Needledrop</title>
+  <link rel="icon" href="static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="static/style.css">
+  <script src="static/app.js" defer></script>
+</head>
+<body>
+  <!-- Icon sprite -->
+  <svg xmlns="http://www.w3.org/2000/svg" hidden aria-hidden="true">
+    <defs>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5 6.5 5h11l2.5 8.5V19H4z"/><path d="M4 13.5h4.5l1.2 2.2h4.6l1.2-2.2H20"/></symbol>
+      <symbol id="i-log" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".9"/><circle cx="4.5" cy="12" r=".9"/><circle cx="4.5" cy="18" r=".9"/></symbol>
+      <symbol id="i-disc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7M10.2 10.5v5.5M13.8 10.5v5.5"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m0 0 6-6m-6 6 6 6"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M17 14v4.5H5.5V7H10"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.2M12 16.8v.2"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.2M12 7.8v.2"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 15V4m0 0L7.8 8.2M12 4l4.2 4.2"/><path d="M4 13.5V19h16v-5.5"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="10.5" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5v3"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></symbol>
+    </defs>
+  </svg>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#download">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <g class="brand-disc">
+            <circle cx="18" cy="22" r="16" class="disc-body"/>
+            <circle cx="18" cy="22" r="12.5" class="disc-groove"/>
+            <circle cx="18" cy="22" r="9.5" class="disc-groove"/>
+            <circle cx="18" cy="22" r="5.4" class="disc-label"/>
+            <path d="M18 17.2a4.8 4.8 0 0 1 4.6 3.4" class="disc-shine"/>
+            <circle cx="18" cy="22" r="1.1" class="disc-hole"/>
+          </g>
+          <path d="M36 3.5 33.5 16 25.5 25" class="tonearm"/>
+          <circle cx="36" cy="3.8" r="2.6" class="tonearm-pivot"/>
+        </svg>
+        <span class="brand-name">Needledrop</span>
+      </a>
+
+      <nav class="tabs" aria-label="Main">
+        <a class="tab" href="#download" data-tab="download">
+          <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg><span>Download</span>
+        </a>
+        <a class="tab" href="#inbox" data-tab="inbox" id="tab-inbox">
+          <svg class="ic" aria-hidden="true"><use href="#i-inbox"/></svg><span>Inbox</span>
+          <span class="badge" id="inbox-badge" hidden>0</span>
+        </a>
+        <a class="tab" href="#log" data-tab="log">
+          <svg class="ic" aria-hidden="true"><use href="#i-log"/></svg><span>Log</span>
+        </a>
+      </nav>
+
+      <div class="status-area">
+        <a class="activity" id="act-dl" href="#download" hidden title="A download is running">
+          <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span class="act-text">downloading…</span>
+        </a>
+        <a class="activity" id="act-tag" href="#inbox" hidden title="beets is tagging">
+          <span class="spinner tiny" aria-hidden="true"></span><span class="act-text">tagging…</span>
+        </a>
+        <button type="button" class="pill t-neutral" id="account-pill" data-act="status-info" aria-label="Apple Music account status">
+          <span class="dot" aria-hidden="true"></span><span id="account-label">Connecting…</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <!-- ============================================================ Download -->
+    <section class="view" id="view-download" aria-labelledby="dl-heading" hidden>
+      <h1 class="sr-only" id="dl-heading">Download</h1>
+      <div class="dl-layout">
+        <div class="dl-search">
+          <form class="searchbar" id="search-form" role="search" autocomplete="off">
+            <label class="sr-only" for="q">Search Apple Music or paste a music.apple.com link</label>
+            <svg class="ic search-ic" aria-hidden="true"><use href="#i-search"/></svg>
+            <input id="q" type="search" placeholder="Search Apple Music, or paste a music.apple.com link"
+                   spellcheck="false" autocapitalize="off" enterkeyhint="search">
+            <span class="spinner" id="search-spin" hidden aria-hidden="true"></span>
+            <kbd class="search-kbd" aria-hidden="true">/</kbd>
+            <button type="button" class="icon-btn" id="q-clear" aria-label="Clear search" hidden>
+              <svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>
+            </button>
+          </form>
+          <div class="chips" id="type-chips" role="group" aria-label="Result types">
+            <button type="button" class="chip" data-act="type" data-type="" aria-pressed="true">All</button>
+            <button type="button" class="chip" data-act="type" data-type="songs" aria-pressed="false">Songs</button>
+            <button type="button" class="chip" data-act="type" data-type="albums" aria-pressed="false">Albums</button>
+            <button type="button" class="chip" data-act="type" data-type="artists" aria-pressed="false">Artists</button>
+            <button type="button" class="chip" data-act="type" data-type="playlists" aria-pressed="false">Playlists</button>
+          </div>
+        </div>
+
+        <div class="dl-results" id="results"></div>
+
+        <aside class="panel jobs-panel" id="jobs-panel" aria-labelledby="jobs-heading">
+          <div class="panel-head">
+            <button type="button" class="panel-toggle" id="jobs-toggle" data-act="jobs-toggle" aria-expanded="true" aria-controls="jobs-body">
+              <h2 id="jobs-heading">Jobs</h2>
+              <span class="panel-count" id="jobs-summary"></span>
+              <svg class="ic chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <button type="button" class="btn small ghost" data-act="jobs-clear" id="jobs-clear" title="Remove done, skipped and cancelled jobs from the list">Clear finished</button>
+          </div>
+          <div class="panel-body" id="jobs-body">
+            <ol class="jobs" id="jobs" aria-label="Download jobs"></ol>
+            <div class="empty small" id="jobs-empty" hidden>
+              <svg class="ic" aria-hidden="true"><use href="#i-disc"/></svg>
+              <p>No downloads yet. Pick something on the left and press <strong>Download</strong>.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============================================================ Inbox -->
+    <section class="view" id="view-inbox" aria-labelledby="inbox-heading" hidden>
+      <div class="view-head">
+        <div class="view-titles">
+          <h1 id="inbox-heading">Inbox</h1>
+          <p class="view-sub" id="inbox-mode"></p>
+        </div>
+        <div class="count-chips" id="inbox-counts" aria-label="Items by status"></div>
+      </div>
+      <div class="chips" id="inbox-filters" role="group" aria-label="Show">
+        <button type="button" class="chip" data-act="inbox-filter" data-filter="needs" aria-pressed="false">Needs review <span class="n"></span></button>
+        <button type="button" class="chip" data-act="inbox-filter" data-filter="progress" aria-pressed="false">In progress <span class="n"></span></button>
+        <button type="button" class="chip" data-act="inbox-filter" data-filter="applied" aria-pressed="false" title="Imported during the last 24 hours">Applied <span class="n"></span></button>
+        <button type="button" class="chip" data-act="inbox-filter" data-filter="all" aria-pressed="false">All <span class="n"></span></button>
+      </div>
+      <div class="icards" id="inbox-list"></div>
+      <div class="empty" id="inbox-empty" hidden></div>
+    </section>
+
+    <!-- ============================================================ Log -->
+    <section class="view" id="view-log" aria-labelledby="log-heading" hidden>
+      <div class="view-head">
+        <div class="view-titles">
+          <h1 id="log-heading">Log</h1>
+          <p class="view-sub">The latest 300 events. Older entries are pruned automatically.</p>
+        </div>
+      </div>
+      <div class="log-tools">
+        <div class="chips" id="log-filters" role="group" aria-label="Event kind">
+          <button type="button" class="chip" data-act="log-kind" data-kind="" aria-pressed="true">All</button>
+          <button type="button" class="chip" data-act="log-kind" data-kind="download" aria-pressed="false">Download</button>
+          <button type="button" class="chip" data-act="log-kind" data-kind="inbox" aria-pressed="false">Inbox</button>
+          <button type="button" class="chip" data-act="log-kind" data-kind="tagger" aria-pressed="false">Tagger</button>
+          <button type="button" class="chip" data-act="log-kind" data-kind="system" aria-pressed="false">System</button>
+        </div>
+        <div class="log-filter">
+          <label class="sr-only" for="log-q">Filter log messages</label>
+          <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="log-q" type="search" placeholder="Filter messages" spellcheck="false" autocomplete="off">
+        </div>
+      </div>
+      <ol class="timeline" id="log-list" aria-label="Events"></ol>
+      <div class="empty" id="log-empty" hidden></div>
+    </section>
+  </main>
+
+  <!-- Sticky selection bar -->
+  <div class="selbar" id="selbar" role="region" aria-label="Selection" hidden>
+    <div class="selbar-inner">
+      <div class="sel-info">
+        <div class="sel-art" id="sel-art" aria-hidden="true"></div>
+        <div>
+          <div class="sel-count"><strong id="sel-count">0</strong> <span id="sel-noun">selected</span></div>
+          <div class="sel-kinds" id="sel-kinds"></div>
+        </div>
+      </div>
+      <label class="switch" id="pl-albums-wrap" hidden>
+        <input type="checkbox" role="switch" id="pl-albums" data-change="pl-albums" checked>
+        <span class="switch-track" aria-hidden="true"></span>
+        <span>Rip full albums for playlists</span>
+      </label>
+      <div class="sel-actions">
+        <button type="button" class="btn ghost" data-act="sel-clear">Clear</button>
+        <button type="button" class="btn primary" data-act="sel-download" id="sel-download">
+          <svg class="ic" aria-hidden="true"><use href="#i-download"/></svg> Download
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
+  <div class="sr-only" id="sr-status" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog class="dialog" id="confirm-dialog" aria-labelledby="cd-title" aria-describedby="cd-body">
+    <form method="dialog">
+      <h2 id="cd-title">Are you sure?</h2>
+      <p id="cd-body"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel" autofocus>Cancel</button>
+        <button class="btn danger" value="ok" id="cd-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

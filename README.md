@@ -21,7 +21,6 @@ One container, one compose stack. Auth is left to the reverse proxy
 | Download history | Shared with the `apple-music-to-rip` timer (`/srv/scripts/music/download-history.sqlite3`), so neither re-rips what the other already did. A job for something already ripped ends as **skipped**; use *Download again* to force it. |
 | Inbox | `rips/apple` — the same folder the timer writes to, so timer rips show up in the Inbox too. The tagger holds off while the timer's scratch folders show activity. |
 | beets | Pinned to the host versions (2.13.1, filetote 1.3.7, importreplace @2069316, pyacoustid 1.3.1) with fpcalc. Uses your `~/.config/beets/config.yaml` and `library.db` unchanged, mounted at the same path. The `searchfix` plugin is baked into the image (`beets/beetsplug/searchfix.py`) instead of loaded from the share. |
-| Navidrome | Optional rescan through the Subsonic API after imports (`NAVIDROME_USER` / `NAVIDROME_PASSWORD`). |
 
 ## Tagging rules
 
@@ -56,7 +55,6 @@ Served at `needledrop.notoverkill.com` via Traefik's default host rule.
 | `DOWNLOADING_DIR` | `/mnt/mediastackdata/music/rips/.downloading` | same share as the library so moves are renames |
 | `AUDIO_POLICY` | `prefer-lossless` | or `lossless-only`, `aac-only` |
 | `HISTORY_DB` | `/srv/scripts/music/download-history.sqlite3` | |
-| `NAVIDROME_USER`, `NAVIDROME_PASSWORD` | unset | enable rescans |
 | `LOG_RETENTION_DAYS` | `30` | |
 
 ## Updating the vendored pieces
