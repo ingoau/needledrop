@@ -18,6 +18,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import mutagen
+
 from . import db, history
 from .config import AUDIO_EXTENSIONS, settings
 
@@ -297,11 +299,29 @@ class Downloads:
             return 0
         for dirpath, dirnames, filenames in os.walk(src_root):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-            for name in filenames:
+            dst_dir = dst_root / Path(dirpath).relative_to(src_root)
+            # Tracks already in the destination folder (by Apple Music id), so
+            # a song download and an album download never leave two copies.
+            have = _track_ids(dst_dir) if not replace and dst_dir.is_dir() else {}
+            skip_stems: set[str] = set()
+            for name in sorted(filenames, key=lambda n: Path(n).suffix.lower() not in AUDIO_EXTENSIONS):
                 if name.startswith("."):
                     continue
                 src = Path(dirpath) / name
-                dst = dst_root / src.relative_to(src_root)
+                dst = dst_dir / name
+                if Path(name).stem in skip_stems:
+                    src.unlink()  # sidecar of a track we already have
+                    continue
+                if src.suffix.lower() in AUDIO_EXTENSIONS and have:
+                    track_id = _track_id(src)
+                    existing = have.get(track_id) if track_id else None
+                    if existing is not None and existing.exists():
+                        if existing.suffix.lower() == ".flac" or src.suffix.lower() != ".flac":
+                            src.unlink()  # keep the copy that's already there
+                            skip_stems.add(src.stem)
+                            continue
+                        # The new copy is lossless and the old one isn't.
+                        _archive_inbox_file(existing)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if dst.exists():
                     if replace:
@@ -321,19 +341,27 @@ class Downloads:
                     album_dirs.add(dst.parent)
         shutil.rmtree(src_root, ignore_errors=True)
 
+        # A single song pulled out of a bigger album is imported as a single
+        # track, but only when its folder holds nothing else: the flag must
+        # never spill onto an album that shares the folder.
         meta = json.loads(job.get("output") or "{}")
-        singleton = int(
+        song_of_album = (
             job["kind"] == "song"
             and (meta.get("options", {}).get("album_track_count") or 1) > 1
         )
         now = time.time()
         for album_dir in album_dirs:
+            audio_here = sum(
+                1 for name in os.listdir(album_dir)
+                if Path(name).suffix.lower() in AUDIO_EXTENSIONS
+            )
+            singleton = int(song_of_album and audio_here == 1)
             db.execute(
                 "INSERT INTO inbox (path, first_seen, last_change, fingerprint, "
                 "status, artist, album, job_id, singleton) "
                 "VALUES (?, ?, ?, '', 'waiting', ?, ?, ?, ?) "
                 "ON CONFLICT(path) DO UPDATE SET job_id = excluded.job_id, "
-                "singleton = MAX(inbox.singleton, excluded.singleton)",
+                "singleton = excluded.singleton",
                 (str(album_dir), now, now, album_dir.parent.name, album_dir.name,
                  job["id"], singleton),
             )
@@ -344,6 +372,41 @@ class Downloads:
         if job is None:
             raise KeyError(job_id)
         return job
+
+
+def _track_id(path: Path) -> str | None:
+    try:
+        tags = getattr(mutagen.File(path), "tags", None) or {}
+    except Exception:
+        return None
+    for key in ("apple_music_id", "cnID"):
+        try:
+            value = tags.get(key)
+        except Exception:
+            value = None
+        if value:
+            return str(value[0] if isinstance(value, list) else value)
+    return None
+
+
+def _track_ids(folder: Path) -> dict[str, Path]:
+    ids: dict[str, Path] = {}
+    for entry in folder.iterdir():
+        if entry.suffix.lower() in AUDIO_EXTENSIONS and not entry.name.startswith("."):
+            track_id = _track_id(entry)
+            if track_id:
+                ids.setdefault(track_id, entry)
+    return ids
+
+
+def _archive_inbox_file(path: Path) -> None:
+    """Move a superseded inbox file (and its sidecars) into the archive."""
+    rel = path.parent.relative_to(settings.inbox_dir)
+    dest_dir = settings.archive_dir / time.strftime("%Y-%m-%d") / "superseded" / rel
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for sibling in path.parent.iterdir():
+        if sibling.stem == path.stem:
+            shutil.move(str(sibling), str(dest_dir / sibling.name))
 
 
 def _audio_files(root: Path) -> list[Path]:

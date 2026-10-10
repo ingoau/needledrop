@@ -172,10 +172,14 @@ def _current(task) -> dict[str, Any]:
 
 class NeedledropSession(importer.ImportSession):
     def __init__(self, *args, mode: str, candidate: str | None,
-                 duplicate_action: DuplicateAction, **kwargs):
+                 duplicate_action: DuplicateAction,
+                 task_paths: list[str] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.mode = mode
         self.candidate = candidate
+        # The file(s) the chosen candidate was matched for. A candidate is a
+        # match for one task only; it must never be applied to the others.
+        self.task_paths = set(task_paths or [])
         self.duplicate_action = duplicate_action
         self.tasks: dict[int, dict[str, Any]] = {}
         self.imported: list[dict[str, Any]] = []
@@ -219,6 +223,11 @@ class NeedledropSession(importer.ImportSession):
             return Action.ASIS
 
         if self.mode == "apply":
+            if self.task_paths and not self.task_paths & {
+                displayable_path(p) for p in task.paths
+            }:
+                entry["decision"] = "skip"
+                return Action.SKIP
             for match in candidates:
                 if match.info.id == self.candidate:
                     entry["decision"] = "apply"
@@ -316,7 +325,10 @@ def needledrop_import(lib, opts, args):
         mode=opts.mode,
         candidate=opts.candidate,
         duplicate_action=DUPLICATE_ACTIONS[opts.duplicate_action],
+        task_paths=opts.task_paths,
     )
+    if opts.archive_dir:
+        _archive_instead_of_delete(lib, opts.archive_dir)
     _track_imports(session)
 
     report: dict[str, Any] = {"path": path, "mode": opts.mode}
@@ -352,8 +364,36 @@ command.parser.add_option(
     "--duplicate-action", default="skip", choices=list(DUPLICATE_ACTIONS)
 )
 command.parser.add_option("--singletons", action="store_true", default=False)
+command.parser.add_option("--task-path", dest="task_paths", action="append", default=[])
+command.parser.add_option("--archive-dir", default=None)
 command.parser.add_option("--report", default="/dev/stdout")
 command.func = needledrop_import
+
+
+def _archive_instead_of_delete(lib, archive_dir: str) -> None:
+    """Library files beets would delete (e.g. replaced duplicates) are moved
+    into the archive instead, keeping their path below the library."""
+    from beets import util
+
+    original_remove = util.remove
+    library_dir = os.fsdecode(lib.directory)
+
+    def remove(path, soft=True):
+        target = os.fsdecode(path)
+        if os.path.isfile(target) and target.startswith(library_dir.rstrip("/") + "/"):
+            dest = os.path.join(archive_dir, os.path.relpath(target, library_dir))
+            base, ext = os.path.splitext(dest)
+            n = 2
+            while os.path.exists(dest):
+                dest = f"{base} ({n}){ext}"
+                n += 1
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            util.move(os.fsencode(target), os.fsencode(dest))
+            print(f"needledrop: archived {target} -> {dest}", file=sys.stderr)
+            return
+        return original_remove(path, soft)
+
+    util.remove = remove
 
 
 def main() -> None:

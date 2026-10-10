@@ -338,9 +338,12 @@ async def inbox_action(body: InboxAction):
     if body.action == "apply":
         if not body.candidate:
             raise HTTPException(400, "candidate is required")
+        report = json.loads(row["report"] or "{}")
         result["pending_until"] = inbox.schedule(body.path, {
             "mode": "apply", "candidate": body.candidate,
             "duplicate_action": body.duplicate_action,
+            # Apply the candidate only to the files it was matched for.
+            "task_paths": _task_paths_for(report, body.candidate),
         })
     elif body.action == "asis":
         result["pending_until"] = inbox.schedule(body.path, {
@@ -452,6 +455,16 @@ async def inbox_undo(body: UndoRequest):
     restored = db.query_one("SELECT status FROM inbox WHERE path = ?", (row["path"],))
     return {"ok": True, "path": row["path"], "status": restored and restored["status"],
             "undone": row.get("undone", [row["path"]])}
+
+
+def _task_paths_for(report: dict[str, Any], candidate: str) -> list[str]:
+    tasks = [t for t in report.get("tasks") or []
+             if any(c.get("id") == candidate for c in t.get("candidates") or [])]
+    if not tasks:
+        return []
+    # Prefer the task this is the top candidate for.
+    tasks.sort(key=lambda t: (t["candidates"][0].get("id") != candidate))
+    return tasks[0].get("paths") or []
 
 
 def _clean_id(value: str) -> str:

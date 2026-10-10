@@ -102,6 +102,7 @@ class TagRequest:
     singletons: bool = field(compare=False, default=False)
     manual: bool = field(compare=False, default=False)
     auto: bool = field(compare=False, default=False)  # may schedule an auto-apply
+    task_paths: tuple[str, ...] = field(compare=False, default=())
 
 
 class Inbox:
@@ -116,7 +117,8 @@ class Inbox:
     def enqueue(self, path: str, mode: str, *, manual: bool = False,
                 candidate: str | None = None, search_id: str | None = None,
                 duplicate_action: str = "skip",
-                singletons: bool | None = None, auto: bool = False) -> None:
+                singletons: bool | None = None, auto: bool = False,
+                task_paths: list[str] | None = None) -> None:
         row = db.query_one("SELECT * FROM inbox WHERE path = ?", (path,))
         if row is None:
             raise KeyError(path)
@@ -135,6 +137,7 @@ class Inbox:
                 singletons=singletons,
                 manual=manual,
                 auto=auto,
+                task_paths=tuple(task_paths or ()),
             )
         )
 
@@ -171,7 +174,7 @@ class Inbox:
         for r in rows:
             action = json.loads(r["pending"] or "{}")
             report = json.loads(r["report"] or "{}")
-            if action.get("mode") in ("apply", "asis"):
+            if action.get("mode") in ("apply", "asis", "auto"):
                 # Whoever applied it, an undo means: don't auto-apply this content.
                 report["auto_undone"] = True
             # Never looked up yet: back to the queue rather than an empty review.
@@ -207,6 +210,7 @@ class Inbox:
                     manual=True,
                     candidate=action.get("candidate"),
                     duplicate_action=action.get("duplicate_action", "skip"),
+                    task_paths=action.get("task_paths"),
                 )
 
     def poke(self) -> None:
@@ -289,9 +293,7 @@ class Inbox:
                 report = json.loads(row["report"])
                 best = _best_candidate(report.get("tasks") or [])
                 if best and _strong_but_unapplied(report):
-                    self.schedule(row["path"], {
-                        "mode": "apply", "candidate": best["id"], "auto": True,
-                    })
+                    self.schedule(row["path"], {"mode": "auto", "auto": True})
                     db.log("info", "tagger",
                            f"Strong match ({round(best['similarity'] * 100, 1)}%), "
                            f"applying in {settings.undo_seconds}s unless undone: "
@@ -383,7 +385,7 @@ class Inbox:
             )
             return
 
-        if request.mode in ("apply", "asis") and row["report"]:
+        if request.mode in ("apply", "asis", "auto") and row["report"] and not imported:
             # Keep the full candidate list from the lookup; only take over
             # what the attempt learned (duplicates, errors).
             previous = json.loads(row["report"])
@@ -402,9 +404,9 @@ class Inbox:
         best = _best_candidate(tasks)
         if (request.auto and settings.auto_apply and status == "review"
                 and best and _strong_but_unapplied(report)):
-            self.schedule(request.path, {
-                "mode": "apply", "candidate": best["id"], "auto": True,
-            })
+            # beets' own per-file rule: each album/track gets its own strong
+            # match; nothing else is touched.
+            self.schedule(request.path, {"mode": "auto", "auto": True})
             db.log("info", "tagger",
                    f"Strong match ({round(best['similarity'] * 100, 1)}%), applying in "
                    f"{settings.undo_seconds}s unless undone: {label} → "
@@ -487,6 +489,11 @@ async def run_beets(request: TagRequest) -> dict[str, Any]:
         args += ["--search-id", request.search_id]
     if request.singletons:
         args.append("--singletons")
+    for task_path in request.task_paths:
+        args += ["--task-path", task_path]
+    args += ["--archive-dir", str(
+        settings.archive_dir / time.strftime("%Y-%m-%d") / "replaced-in-library"
+    )]
     args.append(request.path)
 
     process = await asyncio.create_subprocess_exec(
