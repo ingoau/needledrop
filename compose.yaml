@@ -6,41 +6,27 @@ services:
     image: needledrop:latest
     container_name: needledrop
     restart: unless-stopped
-    # ingowolf, plus the mediastack group that owns the music share (CIFS 0770)
     user: "${PUID:-1000}:${PGID:-1000}"
-    group_add:
-      - "${MEDIA_GID:-1002}"
     env_file:
       - path: .env
         required: false
     environment:
-      BEETSDIR: ${BEETS_CONFIG_DIR:-/home/ingowolf/.config/beets}
-      INBOX_DIR: ${INBOX_DIR:-/mnt/mediastackdata/music/rips/apple}
-      DOWNLOADING_DIR: ${DOWNLOADING_DIR:-/mnt/mediastackdata/music/rips/.downloading}
-      HISTORY_DB: ${HISTORY_DB:-/srv/scripts/music/download-history.sqlite3}
-      WRAPPER_URL: http://wrapper:80
-      WRAPPER_DECRYPT_HOST: wrapper
-      WRAPPER_DECRYPT_PORT: "10020"
+      MUSIC_DIR: ${MUSIC_MOUNT:-/music}
     volumes:
       - ./data:/data
-      # Same paths as on the host: the beets config and library.db use
-      # host-absolute paths, and downloading/inbox/library must share one
-      # filesystem so moves are renames.
-      - /mnt/mediastackdata/music:/mnt/mediastackdata/music
-      - ${BEETS_CONFIG_DIR:-/home/ingowolf/.config/beets}:${BEETS_CONFIG_DIR:-/home/ingowolf/.config/beets}
-      # Shared with the apple-music-to-rip timer so both skip what's already ripped.
-      - ${HISTORY_DIR:-/srv/scripts/music}:${HISTORY_DIR:-/srv/scripts/music}
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.needledrop.middlewares=notoverkill-sso@file
-      - traefik.http.services.needledrop.loadbalancer.server.port=8080
+      # inbox/, .downloading/ and library/ live under here by default.
+      - ${MUSIC_PATH:-./music}:${MUSIC_MOUNT:-/music}
+      # beets config + library.db. A default config is written if empty.
+      - ${BEETS_PATH:-./beets}:/config/beets
+    ports:
+      # No auth built in: keep it on localhost or behind an auth proxy.
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
     networks:
-      - apps
+      - default
       - wrapper
 
 networks:
-  apps:
-    external: true
   wrapper:
-    name: wrapper-v2_default
+    # The compose network of your wrapper-v2 stack.
+    name: ${WRAPPER_NETWORK:-wrapper-v2_default}
     external: true

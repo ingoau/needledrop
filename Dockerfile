@@ -3,7 +3,7 @@ FROM python:3.13-slim-trixie
 ARG FREAC_VERSION=1.1.7
 ARG FREAC_SHA256=
 
-# ffmpeg/ffprobe for the rip script, fpcalc for beets' chroma plugin, and the
+# ffmpeg/ffprobe for transcoding, fpcalc for beets' chroma plugin, and the
 # GTK/codec runtime fre:ac's command line tool links against (even headless).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git tini ffmpeg libchromaprint-tools \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libvorbisenc2 libopus0 libmp3lame0 libmpg123-0t64 \
     && rm -rf /var/lib/apt/lists/*
 
-# fre:ac (native ALAC decoder used by apple-music-to-flac.py)
+# fre:ac: decodes Apple's ALAC more reliably than FFmpeg does
 RUN curl -fsSL -o /tmp/freac.AppImage \
         "https://github.com/enzo1982/freac/releases/download/v${FREAC_VERSION}/freac-${FREAC_VERSION}-linux-x86_64.AppImage" \
     && if [ -n "$FREAC_SHA256" ]; then echo "$FREAC_SHA256  /tmp/freac.AppImage" | sha256sum -c -; fi \
@@ -27,21 +27,19 @@ RUN python -m venv /opt/beets \
     && /opt/beets/bin/pip install --no-cache-dir -r /tmp/beets-requirements.txt
 
 # gamdl + the web app
-COPY downloader/requirements.txt /tmp/rip-requirements.txt
 COPY requirements.txt /tmp/app-requirements.txt
 RUN python -m venv /opt/app \
-    && /opt/app/bin/pip install --no-cache-dir \
-        -r /tmp/rip-requirements.txt -r /tmp/app-requirements.txt
+    && /opt/app/bin/pip install --no-cache-dir -r /tmp/app-requirements.txt
 
 COPY --chmod=a+rX beets /opt/needledrop/beets
-COPY --chmod=a+rX downloader /opt/needledrop/downloader
 COPY --chmod=a+rX app /opt/needledrop/app
 
 ENV PYTHONUNBUFFERED=1 \
     PATH=/opt/app/bin:$PATH \
-    RIP_PYTHON=/opt/app/bin/python \
     FREACCMD=/usr/local/bin/freaccmd \
     NEEDLEDROP_DATA=/data \
+    MUSIC_DIR=/music \
+    BEETSDIR=/config/beets \
     HOME=/data
 
 WORKDIR /opt/needledrop

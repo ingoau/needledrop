@@ -68,9 +68,17 @@ class Catalog:
         }
 
     async def search(self, term: str, types: str) -> dict[str, list[dict]]:
-        raw = await self._call(
-            "get_search_results", term=term, types=types, limit=25
-        )
+        api = await self.api()
+        params = {
+            "term": term, "types": types, "limit": 25,
+            "include[songs]": "artists,albums", "include[albums]": "artists",
+        }
+        path = f"/v1/catalog/{api.storefront}/search"
+        try:
+            raw = await api._amp_request(path, params)
+        except Exception:
+            api = await self.api(refresh=True)
+            raw = await api._amp_request(path, params)
         results: dict[str, list[dict]] = {}
         for key, block in (raw.get("results") or {}).items():
             if key not in TYPE_MAP:
@@ -106,10 +114,12 @@ class Catalog:
         tracks = (
             (data.get("relationships") or {}).get("tracks") or {}
         ).get("data") or []
-        return {
-            "album": normalize(data),
-            "tracks": [normalize(t) for t in tracks],
-        }
+        album = normalize(data)
+        songs = [normalize(t) for t in tracks]
+        for song in songs:
+            song["album_id"] = song.get("album_id") or album["id"]
+            song["artists"] = song.get("artists") or album["artists"]
+        return {"album": album, "tracks": songs}
 
     async def playlist(self, playlist_id: str) -> dict[str, Any]:
         raw = await self._call("get_playlist", playlist_id)
@@ -172,7 +182,19 @@ def normalize(item: dict[str, Any]) -> dict[str, Any]:
         "explicit": attrs.get("contentRating") == "explicit",
         "streamable": bool(attrs.get("playParams")),
     }
+    rel = item.get("relationships") or {}
+    artists = (rel.get("artists") or {}).get("data") or []
+    out["artists"] = [
+        {"id": a.get("id"), "name": (a.get("attributes") or {}).get("name")}
+        for a in artists if a.get("id")
+    ]
     if kind == "song":
+        albums = (rel.get("albums") or {}).get("data") or []
+        album_id = albums[0].get("id") if albums else None
+        if not album_id:
+            match = re.search(r"/album/[^/]+/(\d+)", attrs.get("url") or "")
+            album_id = match.group(1) if match else None
+        out["album_id"] = album_id
         out["album"] = attrs.get("albumName")
         out["duration_ms"] = attrs.get("durationInMillis")
         out["track_number"] = attrs.get("trackNumber")

@@ -52,6 +52,19 @@ CREATE TABLE IF NOT EXISTS events (
     details TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+CREATE TABLE IF NOT EXISTS history (
+    media_id TEXT PRIMARY KEY,     -- Apple Music catalog song id
+    isrc TEXT,
+    album_id TEXT,
+    title TEXT,
+    artist TEXT,
+    album TEXT,
+    codec TEXT,
+    path TEXT,
+    completed_at REAL,
+    source TEXT                    -- job:<id> | import:<format>
+);
+CREATE INDEX IF NOT EXISTS history_album ON history(album_id);
 """
 
 _lock = threading.RLock()

@@ -27,25 +27,14 @@ APPLIED_VISIBLE_SECONDS = 24 * 3600
 # ---------------------------------------------------------------- scanning
 
 
-# The apple-music-to-rip timer writes straight into the inbox. These are the
-# scratch folders it uses while a rip is in flight.
-RIP_ACTIVITY_DIRS = (".gamdl-temp", ".apple-music-to-flac-tmp")
-RIP_ACTIVITY_WINDOW = 10 * 60
-
-
-def _scan_inbox() -> tuple[dict[str, tuple[str, int, str | None, str | None]], bool]:
-    """Return ({dir: (fingerprint, audio_count, artist, album)}, rip_active)."""
+def _scan_inbox() -> dict[str, tuple[str, int, str | None, str | None]]:
+    """Return {dir: (fingerprint, audio_count, artist, album)} for the inbox."""
     found: dict[str, tuple[str, int, str | None, str | None]] = {}
-    rip_active = False
     root = settings.inbox_dir
     if not root.is_dir():
-        return found, rip_active
+        return found
 
-    now = time.time()
     for dirpath, dirnames, filenames in os.walk(root):
-        for name in RIP_ACTIVITY_DIRS:
-            if name in dirnames and _recently_active(os.path.join(dirpath, name), now):
-                rip_active = True
         # Skip hidden folders (gamdl temp, the rip script's locks, etc).
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         audio = [
@@ -66,19 +55,7 @@ def _scan_inbox() -> tuple[dict[str, tuple[str, int, str | None, str | None]], b
         artist = parts[0] if len(parts) >= 2 else None
         album = parts[-1] if parts else None
         found[dirpath] = (digest.hexdigest(), len(audio), artist, album)
-    return found, rip_active
-
-
-def _recently_active(path: str, now: float) -> bool:
-    """True if a rip scratch folder has content touched in the last few minutes."""
-    try:
-        with os.scandir(path) as entries:
-            for entry in entries:
-                if now - entry.stat().st_mtime < RIP_ACTIVITY_WINDOW:
-                    return True
-    except OSError:
-        pass
-    return False
+    return found
 
 
 def _has_audio(path: str) -> bool:
@@ -131,7 +108,6 @@ class Inbox:
         self._seq = itertools.count()
         self.current: str | None = None
         self._rescan_needed = asyncio.Event()
-        self.rip_active = False
 
     # -- public API used by the web layer
 
@@ -187,12 +163,8 @@ class Inbox:
             self._rescan_needed.clear()
 
     async def _scan_once(self) -> None:
-        found, rip_active = await asyncio.to_thread(_scan_inbox)
-        if rip_active != self.rip_active:
-            self.rip_active = rip_active
-            db.log("info", "inbox",
-                   "The rip timer is writing to the inbox; holding the tagger"
-                   if rip_active else "The rip timer finished; tagger resumed")
+        settings.inbox_dir.mkdir(parents=True, exist_ok=True)
+        found = await asyncio.to_thread(_scan_inbox)
         now = time.time()
         known = {row["path"]: row for row in db.query("SELECT * FROM inbox")}
 
@@ -235,10 +207,7 @@ class Inbox:
                    f"Left the inbox: {_label(row['artist'], row['album'])}",
                    ref=path)
 
-        # Hand settled items to the tagger, unless a rip is still landing.
-        if rip_active:
-            db.prune_events()
-            return
+        # Hand settled items to the tagger.
         for row in db.query("SELECT * FROM inbox WHERE status = 'waiting'"):
             if now - row["last_change"] < settings.tagger_buffer_seconds:
                 continue
@@ -366,7 +335,7 @@ async def run_beets(request: TagRequest) -> dict[str, Any]:
     report_path = settings.reports_dir / f"{uuid.uuid4().hex}.json"
     args = [
         settings.beet_python, settings.beet_driver,
-        "-c", settings.beet_overlay,
+        "-c", str(settings.beet_overlay),
         "needledrop-import",
         "--mode", request.mode,
         "--report", str(report_path),

@@ -1,0 +1,18 @@
+# Example override for running behind Traefik + an SSO forward-auth
+# middleware instead of publishing a port. Copy to compose.override.yaml.
+services:
+  needledrop:
+    ports: !reset []
+    group_add:
+      - "1002"   # e.g. a media group that owns the music share
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.needledrop.middlewares=sso@file
+      - traefik.http.services.needledrop.loadbalancer.server.port=8080
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: proxy
+    external: true

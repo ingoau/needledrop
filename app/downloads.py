@@ -1,29 +1,27 @@
-"""Download jobs, run one at a time through apple-music-to-flac.py.
+"""Download jobs, run one at a time through the rip engine (app/rip.py).
 
-Each job gets its own folder under the downloading directory. The rip script
-writes verified FLACs (plus .ttml sidecars) there; only when the run finishes
-with every track present does the job's content move into the inbox.
+Each job gets its own folder under the downloading directory. Only when every
+track of the job is present does its content move into the inbox.
 """
 
 from __future__ import annotations
 
 import asyncio
-import configparser
 import json
 import os
+import re
 import shutil
 import signal
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from . import db
+from . import db, history
 from .config import AUDIO_EXTENSIONS, settings
 
-# Events in the rip script's JSONL log that end a track.
-DONE_EVENTS = {"track_completed"}
-SKIP_EVENTS = {"track_skipped_history", "track_skipped_history_after_lock"}
+ACTIVE = ("queued", "downloading", "finishing")
 
 
 class Downloads:
@@ -48,22 +46,23 @@ class Downloads:
             (job_id, now, now, kind, apple_id, url, title, subtitle, artwork,
              expected_tracks, json.dumps({"options": options})),
         )
-        db.log("info", "download", f"Queued {kind}: {_job_label(title, subtitle)}",
+        db.log("info", "download", f"Queued {kind}: {_label(title, subtitle)}",
                ref=job_id)
         self._wake.set()
         return job_id
 
     def retry(self, job_id: str, force: bool = False) -> None:
         job = self._get(job_id)
-        if job["status"] in ("queued", "downloading", "finishing"):
+        if job["status"] in ACTIVE:
             return
         meta = json.loads(job["output"] or "{}")
-        meta.setdefault("options", {})["force"] = force or meta["options"].get("force")
+        options = meta.setdefault("options", {})
+        options["force"] = force or options.get("force", False)
         db.update("jobs", "id", job_id, status="queued", error=None,
                   updated=time.time(), output=json.dumps(meta))
         db.log("info", "download",
                f"{'Re-downloading' if force else 'Retrying'}: "
-               f"{_job_label(job['title'], job['subtitle'])}", ref=job_id)
+               f"{_label(job['title'], job['subtitle'])}", ref=job_id)
         self._wake.set()
 
     async def cancel(self, job_id: str) -> None:
@@ -71,12 +70,10 @@ class Downloads:
         if job["status"] == "queued":
             db.update("jobs", "id", job_id, status="cancelled", updated=time.time())
             db.log("info", "download",
-                   f"Cancelled: {_job_label(job['title'], job['subtitle'])}",
-                   ref=job_id)
+                   f"Cancelled: {_label(job['title'], job['subtitle'])}", ref=job_id)
         elif self.current == job_id and self.process is not None:
-            # The rip script cleans up on SIGINT, not on SIGTERM.
-            self.process.send_signal(signal.SIGINT)
             self._cancel_requested = job_id
+            self.process.send_signal(signal.SIGINT)
 
     async def release(self, job_id: str) -> None:
         """Send whatever a stopped job has into the inbox."""
@@ -84,26 +81,25 @@ class Downloads:
         if job["status"] not in ("failed", "partial", "cancelled"):
             return
         moved = await asyncio.to_thread(self._move_to_inbox, job)
-        db.update("jobs", "id", job_id, status="done", updated=time.time(),
-                  error=None)
+        db.update("jobs", "id", job_id, status="done", updated=time.time(), error=None)
         db.log("info", "download",
                f"Sent {moved} file(s) to the inbox anyway: "
-               f"{_job_label(job['title'], job['subtitle'])}", ref=job_id)
+               f"{_label(job['title'], job['subtitle'])}", ref=job_id)
 
     async def discard(self, job_id: str) -> None:
         job = self._get(job_id)
-        if job["status"] in ("queued", "downloading", "finishing"):
+        if job["status"] in ACTIVE:
             return
         await asyncio.to_thread(shutil.rmtree, self.job_dir(job_id), True)
+        if job["status"] != "done":
+            # Its files are gone, so don't let the history claim we have them.
+            db.execute("DELETE FROM history WHERE source = ?", (f"job:{job_id}",))
         db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
         db.log("info", "download",
-               f"Removed: {_job_label(job['title'], job['subtitle'])}", ref=job_id)
+               f"Removed: {_label(job['title'], job['subtitle'])}", ref=job_id)
 
     def job_dir(self, job_id: str) -> Path:
         return settings.downloading_dir / job_id
-
-    def log_path(self, job_id: str) -> Path:
-        return settings.data_dir / "jobs" / job_id / "run.jsonl"
 
     # -- worker
 
@@ -132,7 +128,7 @@ class Downloads:
                 db.update("jobs", "id", job["id"], status="failed",
                           error=f"{type(exc).__name__}: {exc}", updated=time.time())
                 db.log("error", "download",
-                       f"Job crashed: {_job_label(job['title'], job['subtitle'])}: {exc}",
+                       f"Job crashed: {_label(job['title'], job['subtitle'])}: {exc}",
                        ref=job["id"])
             finally:
                 self.current = None
@@ -141,7 +137,7 @@ class Downloads:
 
     async def _run_job(self, job: dict[str, Any]) -> None:
         job_id = job["id"]
-        label = _job_label(job["title"], job["subtitle"])
+        label = _label(job["title"], job["subtitle"])
         meta = json.loads(job["output"] or "{}")
         options = meta.get("options", {})
 
@@ -149,106 +145,103 @@ class Downloads:
         out_dir.mkdir(parents=True, exist_ok=True)
         work_dir = settings.data_dir / "jobs" / job_id
         work_dir.mkdir(parents=True, exist_ok=True)
-        ini = work_dir / "gamdl.ini"
-        _write_job_ini(ini, out_dir)
-        log_path = self.log_path(job_id)
-        log_path.unlink(missing_ok=True)
 
         args = [
-            settings.rip_python, settings.rip_script,
-            "--config", str(ini),
+            sys.executable, "-m", "app.rip",
+            "--url", job["url"],
             "--output", str(out_dir),
-            "--jsonl-log", str(log_path),
-            "--history-db", str(settings.history_db),
-            "--freaccmd", settings.freaccmd,
+            "--history-db", str(settings.db_path),
             "--audio-policy", options.get("audio_policy") or settings.audio_policy,
             "--lyrics-format", settings.lyrics_format,
+            "--freaccmd", settings.freaccmd,
+            "--wrapper-url", settings.wrapper_url,
+            "--wrapper-decrypt-host", settings.wrapper_decrypt_host,
+            "--wrapper-decrypt-port", str(settings.wrapper_decrypt_port),
+            "--language", settings.language,
         ]
         if job["kind"] == "playlist" and options.get("playlist_albums"):
             args.append("--playlist-albums")
         if options.get("force"):
-            if job["kind"] == "album":
-                args += ["--force-album", job["apple_id"]]
-            elif job["kind"] == "song":
-                args += ["--force-track", job["apple_id"]]
-            else:
-                args.append("--force")
-        args.append(job["url"])
+            args.append("--force")
 
         db.update("jobs", "id", job_id, status="downloading", done_tracks=0,
                   error=None, updated=time.time())
         db.log("info", "download", f"Downloading: {label}", ref=job_id)
 
-        self.progress = {"done": 0, "skipped": 0, "failed": 0, "current": None}
+        p = self.progress = {
+            "done": 0, "skipped": 0, "failed": 0, "current": None,
+            "total": 0, "errors": [], "skipped_history": 0,
+        }
         self.process = await asyncio.create_subprocess_exec(
             *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(work_dir),
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).resolve().parent.parent),
             env={**os.environ, "HOME": str(work_dir)},
+            limit=1 << 20,
         )
-        output_tail: list[str] = []
+        tail: list[str] = []
 
-        async def pump() -> None:
+        async def read_events() -> None:
             assert self.process and self.process.stdout
             async for raw in self.process.stdout:
-                line = raw.decode("utf-8", "replace").rstrip()
-                output_tail.append(line)
-                del output_tail[:-200]
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                self._apply(event, job_id)
 
-        async def watch() -> None:
-            offset = 0
-            while self.process and self.process.returncode is None:
-                offset = await asyncio.to_thread(
-                    self._read_progress, log_path, offset, job_id
-                )
-                await asyncio.sleep(1)
+        async def read_log() -> None:
+            assert self.process and self.process.stderr
+            buffer = b""
+            while chunk := await self.process.stderr.read(65536):
+                buffer += chunk
+                *lines, buffer = re.split(rb"[\r\n]", buffer)
+                for line in lines:
+                    text = line.decode("utf-8", "replace").rstrip()
+                    if text and not text.startswith("[download]"):
+                        tail.append(text[:500])
+                del tail[:-200]
 
-        watcher = asyncio.create_task(watch())
-        await pump()
+        await asyncio.gather(read_events(), read_log())
         returncode = await self.process.wait()
-        watcher.cancel()
-        await asyncio.to_thread(self._read_progress, log_path, 0, job_id, True)
 
-        summary = self.progress.get("summary") or {}
-        meta["summary"] = summary
-        meta["returncode"] = returncode
-        meta["tail"] = output_tail[-60:]
-        meta["fatal"] = self.progress.get("fatal")
         files = await asyncio.to_thread(_audio_files, out_dir)
-        done = self.progress["done"]
-        failed = self.progress["failed"]
+        meta.update(
+            returncode=returncode, tail=tail[-60:],
+            summary=p.get("summary"), errors=p["errors"][-20:],
+        )
 
         if self._cancel_requested == job_id or returncode == 130:
             status, error = "cancelled", "Cancelled"
+        elif p.get("fatal"):
+            status = "partial" if files else "failed"
+            error = p["fatal"]
         elif returncode == 0 and files:
             status, error = "finishing", None
-        elif returncode == 0 and self.progress["skipped"] and not files:
-            status = "skipped"
-            error = "Already ripped before (in the download history)"
+        elif returncode == 0 and p["skipped_history"] and not files:
+            status, error = "skipped", "Already downloaded before (in the history)"
         elif returncode == 0:
-            status, error = "done", "Nothing was downloaded"
+            status, error = "done", "Nothing to download"
         else:
             status = "partial" if files else "failed"
-            error = (
-                self.progress.get("fatal")
-                or self.progress.get("last_error")
-                or (output_tail[-1] if output_tail else f"exit code {returncode}")
-            )
+            error = (p["errors"][-1] if p["errors"]
+                     else tail[-1] if tail else f"exit code {returncode}")
 
         db.update("jobs", "id", job_id, status=status, error=error,
-                  done_tracks=done, output=json.dumps(meta), updated=time.time())
+                  done_tracks=p["done"], expected_tracks=p["total"] or job["expected_tracks"],
+                  output=json.dumps(meta), updated=time.time())
 
         if status == "finishing":
             moved = await asyncio.to_thread(self._move_to_inbox, self._get(job_id))
             db.update("jobs", "id", job_id, status="done", updated=time.time())
+            skipped = f", {p['skipped']} skipped" if p["skipped"] else ""
             db.log("success", "download",
-                   f"Downloaded {done} track(s), {moved} file(s) to inbox: {label}",
-                   ref=job_id, details={"summary": summary})
+                   f"Downloaded {p['done']} track(s){skipped}; {moved} file(s) to the inbox: {label}",
+                   ref=job_id, details={"summary": p.get("summary")})
         elif status == "skipped":
-            db.log("info", "download", f"Skipped, already ripped: {label}",
-                   ref=job_id)
+            db.log("info", "download", f"Already downloaded: {label}", ref=job_id)
         elif status == "cancelled":
             db.log("info", "download", f"Cancelled: {label}", ref=job_id)
         elif status == "done":
@@ -256,62 +249,39 @@ class Downloads:
         else:
             db.log("error", "download",
                    f"{'Incomplete' if status == 'partial' else 'Failed'}: {label}: {error}",
-                   ref=job_id, details={"summary": summary, "failed": failed})
+                   ref=job_id, details={"errors": p["errors"][-5:]})
 
-    # -- progress
-
-    def _read_progress(self, path: Path, offset: int, job_id: str,
-                       final: bool = False) -> int:
-        if not path.exists():
-            return offset
-        if final:
-            offset = 0
-            self.progress.update(done=0, skipped=0, failed=0)
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            fh.seek(offset)
-            for line in fh:
-                if not line.endswith("\n"):
-                    break
-                offset += len(line.encode("utf-8"))
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                self._apply_event(event)
-        if not final:
-            db.update("jobs", "id", job_id, done_tracks=self.progress["done"],
-                      updated=time.time())
-        return offset
-
-    def _apply_event(self, event: dict[str, Any]) -> None:
-        name = event.get("event")
+    def _apply(self, event: dict[str, Any], job_id: str) -> None:
         p = self.progress
-        if name == "track_started":
+        name = event.get("event")
+        if name in ("album", "playlist"):
+            p["total"] += event.get("total") or 0
+        elif name == "expanded":
+            p["albums"] = event.get("albums")
+        elif name == "track_started":
             p["current"] = event.get("title")
-        elif name in DONE_EVENTS:
+            if not p["total"]:
+                p["total"] = event.get("total") or 0
+        elif name == "track_completed":
             p["done"] += 1
-        elif name in SKIP_EVENTS:
+            history.record(event, job_id)
+        elif name == "track_skipped":
             p["skipped"] += 1
-        elif name == "album_skipped_history":
-            p["skipped"] += event.get("track_count") or 1
-        elif name in ("track_attempt_failed", "finalization_failed") and event.get("terminal"):
+            if event.get("reason") == "history":
+                p["skipped_history"] += 1
+        elif name == "track_failed":
             p["failed"] += 1
-            p["last_error"] = f"{event.get('title')}: {event.get('error')}"
-        elif name in ("item_resolution_failed", "url_resolution_exception") and not event.get("retryable", True):
+            p["errors"].append(f"{event.get('title')}: {event.get('error')}")
+        elif name == "url_failed":
             p["failed"] += 1
-            p["last_error"] = event.get("error")
-        elif name == "playlist_album_expansion_completed":
-            p["albums"] = event.get("unique_albums")
-        elif name == "run_summary":
-            p["summary"] = {
-                k: event.get(k) for k in (
-                    "download_attempts", "flac_converted", "aac_retained",
-                    "skipped", "history_skipped", "failed",
-                    "finalization_failed", "exit_code",
-                )
-            }
-        elif name == "run_fatal_error":
-            p["fatal"] = f"{event.get('error_type')}: {event.get('error')}"
+            p["errors"].append(event.get("error"))
+        elif name == "summary":
+            p["summary"] = {k: event.get(k) for k in ("completed", "skipped", "failed")}
+        elif name == "fatal":
+            p["fatal"] = event.get("error")
+        if name in ("track_completed", "track_skipped", "track_failed", "album", "playlist"):
+            db.update("jobs", "id", job_id, done_tracks=p["done"], updated=time.time(),
+                      expected_tracks=p["total"] or None)
 
     # -- moving into the inbox
 
@@ -328,8 +298,7 @@ class Downloads:
                 if name.startswith("."):
                     continue
                 src = Path(dirpath) / name
-                rel = src.relative_to(src_root)
-                dst = dst_root / rel
+                dst = dst_root / src.relative_to(src_root)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if dst.exists():
                     if dst.stat().st_size == src.stat().st_size:
@@ -342,11 +311,11 @@ class Downloads:
                     album_dirs.add(dst.parent)
         shutil.rmtree(src_root, ignore_errors=True)
 
-        # Single songs pulled out of a larger album go in as singletons.
-        singleton = 1 if (
-            job["kind"] == "song" and (job.get("expected_tracks") or 1) == 1
-            and _album_has_more_tracks(job)
-        ) else 0
+        meta = json.loads(job.get("output") or "{}")
+        singleton = int(
+            job["kind"] == "song"
+            and (meta.get("options", {}).get("album_track_count") or 1) > 1
+        )
         now = time.time()
         for album_dir in album_dirs:
             db.execute(
@@ -367,11 +336,6 @@ class Downloads:
         return job
 
 
-def _album_has_more_tracks(job: dict[str, Any]) -> bool:
-    meta = json.loads(job.get("output") or "{}")
-    return (meta.get("options", {}).get("album_track_count") or 1) > 1
-
-
 def _audio_files(root: Path) -> list[Path]:
     found = []
     if not root.exists():
@@ -384,23 +348,7 @@ def _audio_files(root: Path) -> list[Path]:
     return found
 
 
-def _write_job_ini(path: Path, out_dir: Path) -> None:
-    """Per-job copy of the gamdl ini, pointed at the wrapper's compose network."""
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(settings.gamdl_ini_template)
-    section = parser["gamdl"]
-    section["use_wrapper"] = "true"
-    section["wrapper_url"] = settings.wrapper_url
-    section["wrapper_decrypt_host"] = settings.wrapper_decrypt_host
-    section["wrapper_decrypt_port"] = str(settings.wrapper_decrypt_port)
-    section["output_path"] = str(out_dir)
-    section["temp_path"] = str(out_dir / ".gamdl-temp")
-    section["language"] = settings.language
-    with path.open("w", encoding="utf-8") as fh:
-        parser.write(fh)
-
-
-def _job_label(title: str | None, subtitle: str | None) -> str:
+def _label(title: str | None, subtitle: str | None) -> str:
     if title and subtitle:
         return f"{title} — {subtitle}"
     return title or subtitle or "(untitled)"

@@ -5,16 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db
+from . import beets_setup, db, history
 from .apple import catalog
 from .config import settings
 from .downloads import downloads
@@ -26,6 +27,9 @@ STATIC = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.conn()
+    for folder in (settings.inbox_dir, settings.downloading_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    beets_setup.prepare()
     db.log("info", "system", "Needledrop started")
     tasks = [asyncio.create_task(downloads.run()), asyncio.create_task(inbox.run())]
     yield
@@ -59,7 +63,6 @@ async def status() -> dict[str, Any]:
         "downloading": downloads.current,
         "tagging": inbox.current,
         "tag_queue": inbox.queue.qsize(),
-        "rip_active": inbox.rip_active,
         "inbox_counts": counts,
     }
 
@@ -72,25 +75,37 @@ async def search(q: str, types: str = "songs,albums,artists,playlists"):
     try:
         if "music.apple.com" in q:
             item = await catalog.resolve(q)
-            return {"results": {item["type"]: [item]} if item else {}}
-        return {"results": await catalog.search(q, types)}
+            results = {item["type"]: [item]} if item else {}
+        else:
+            results = await catalog.search(q, types)
+        for items in results.values():
+            history.annotate(items)
+        return {"results": results}
     except Exception as exc:
         raise HTTPException(502, f"Apple Music search failed: {exc}")
 
 
 @app.get("/api/artist/{artist_id}")
 async def artist(artist_id: str):
-    return await _catalog_call(catalog.artist, artist_id)
+    data = await _catalog_call(catalog.artist, artist_id)
+    for section in data["sections"]:
+        history.annotate(section["items"])
+    return data
 
 
 @app.get("/api/album/{album_id}")
 async def album(album_id: str):
-    return await _catalog_call(catalog.album, album_id)
+    data = await _catalog_call(catalog.album, album_id)
+    history.annotate([data["album"]])
+    history.annotate(data["tracks"])
+    return data
 
 
 @app.get("/api/playlist/{playlist_id}")
 async def playlist(playlist_id: str):
-    return await _catalog_call(catalog.playlist, playlist_id)
+    data = await _catalog_call(catalog.playlist, playlist_id)
+    history.annotate(data["tracks"])
+    return data
 
 
 async def _catalog_call(func, ident: str):
@@ -110,6 +125,7 @@ class JobItem(BaseModel):
     name: str | None = None
     artist: str | None = None
     album: str | None = None
+    album_id: str | None = None
     artwork: str | None = None
     track_count: int | None = None
 
@@ -135,8 +151,15 @@ async def create_jobs(request: JobRequest):
             expected = 1
             # A song from a one-track single tags fine as an album; one taken
             # out of a bigger album goes in as a singleton.
-            is_single = bool(re.search(r"\s-\s(Single|EP)$", item.album or ""))
-            options["album_track_count"] = 1 if is_single else 2
+            album_tracks = None
+            if item.album_id:
+                try:
+                    album_tracks = (await catalog.album(item.album_id))["album"]["track_count"]
+                except Exception:
+                    pass
+            if album_tracks is None:
+                album_tracks = 1 if re.search(r"\s-\s(Single|EP)$", item.album or "") else 2
+            options["album_track_count"] = album_tracks
         elif item.type == "album":
             try:
                 detail = await catalog.album(item.id)
@@ -222,6 +245,42 @@ def _job_or_404(job_id: str) -> dict[str, Any]:
     if job is None:
         raise HTTPException(404, "No such job")
     return job
+
+
+# ------------------------------------------------------------------ history
+
+
+@app.get("/api/history")
+async def history_stats():
+    return history.stats()
+
+
+@app.post("/api/history/import")
+async def history_import(request: Request):
+    """Body: the raw bytes of a history SQLite file."""
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "Upload a history database file")
+    upload = settings.data_dir / f"import-{uuid.uuid4().hex}.sqlite3"
+    upload.write_bytes(body)
+    try:
+        return await asyncio.to_thread(history.import_file, str(upload))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        upload.unlink(missing_ok=True)
+
+
+class ForgetRequest(BaseModel):
+    media_ids: list[str] = []
+    album_id: str | None = None
+
+
+@app.post("/api/history/forget")
+async def history_forget(body: ForgetRequest):
+    removed = history.forget(body.media_ids, body.album_id)
+    db.log("info", "system", f"Removed {removed} track(s) from the download history")
+    return {"removed": removed}
 
 
 # ------------------------------------------------------------------ inbox
