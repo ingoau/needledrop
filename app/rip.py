@@ -149,6 +149,31 @@ def pcm_hash(path: Path) -> str:
     return out.strip()
 
 
+# Scratch work happens on local disk: reading a file back from a network
+# share straight after another process wrote it can return stale data, and
+# the share's recycle bin would keep every temp file.
+SCRATCH = Path(os.environ.get("NEEDLEDROP_SCRATCH", "/tmp/needledrop"))
+
+
+def _decode(source: Path, native: Path, src: dict[str, Any], decoder: str) -> str:
+    """Decode to FLAC with one decoder and check it against the source."""
+    native.unlink(missing_ok=True)
+    if decoder == "ffmpeg":
+        _run(["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(source),
+              "-map", "0:a:0", "-c:a", "flac", str(native)])
+    else:
+        _run([decoder, "-e", "flac", "-o", str(native), str(source)])
+    decoded = probe(native)
+    for key in ("sample_rate", "channels", "bits"):
+        if str(decoded[key]) != str(src[key]):
+            raise TranscodeError(f"{key} changed in decode: {src[key]} -> {decoded[key]}")
+    if abs(decoded["duration"] - src["duration"]) > 0.05:
+        raise TranscodeError(
+            f"duration changed in decode: {src['duration']} -> {decoded['duration']}"
+        )
+    return pcm_hash(native)
+
+
 def to_flac(source: Path, freaccmd: str | None,
             tags: dict[str, str] | None = None) -> Path:
     """Convert an ALAC .m4a into a verified FLAC next to it; remove the source.
@@ -156,38 +181,34 @@ def to_flac(source: Path, freaccmd: str | None,
     `tags` are extra Vorbis comments, e.g. the Apple Music ids that let
     Needledrop find the release again later.
     """
-    src = probe(source)
     target = source.with_suffix(".flac")
-    scratch = source.parent / ".needledrop-tmp"
-    scratch.mkdir(exist_ok=True)
-    token = uuid.uuid4().hex[:8]
-    native = scratch / f"{token}.native.flac"
-    final = scratch / f"{token}.final.flac"
+    work = SCRATCH / uuid.uuid4().hex[:12]
+    work.mkdir(parents=True, exist_ok=True)
+    local = work / "source.m4a"
+    native = work / "native.flac"
+    final = work / "final.flac"
     try:
+        shutil.copyfile(source, local)
+        src = probe(local)
         # fre:ac's decoder copes with Apple ALAC packet layouts that FFmpeg
-        # occasionally rejects; FFmpeg is the fallback.
-        if freaccmd:
-            _run([freaccmd, "-e", "flac", "-o", str(native), str(source)])
-        else:
-            _run(["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(source),
-                  "-map", "0:a:0", "-c:a", "flac", str(native)])
-
-        decoded = probe(native)
-        for key in ("sample_rate", "channels", "bits"):
-            if str(decoded[key]) != str(src[key]):
-                raise TranscodeError(
-                    f"{key} changed in decode: {src[key]} -> {decoded[key]}"
-                )
-        if abs(decoded["duration"] - src["duration"]) > 0.05:
-            raise TranscodeError(
-                f"duration changed in decode: {src['duration']} -> {decoded['duration']}"
-            )
-        native_hash = pcm_hash(native)
+        # occasionally rejects; FFmpeg is the fallback either way.
+        decoders = ([freaccmd] if freaccmd else []) + ["ffmpeg"]
+        errors = []
+        native_hash = None
+        for decoder in decoders:
+            try:
+                native_hash = _decode(local, native, src, decoder)
+                break
+            except TranscodeError as exc:
+                errors.append(f"{Path(decoder).name}: {exc}")
+                note(f"{Path(decoder).name} couldn't convert {source.name}: {exc}")
+        if native_hash is None:
+            raise TranscodeError("; ".join(errors))
 
         # Copy tags and artwork from the source; never re-encode the audio.
         _run([
             "ffmpeg", "-nostdin", "-y", "-v", "error", "-xerror",
-            "-i", str(native), "-i", str(source),
+            "-i", str(native), "-i", str(local),
             "-map", "0:a:0", "-map", "1:v?", "-map_metadata", "1",
             "-c", "copy", "-disposition:v", "attached_pic",
             "-metadata:s:v", "comment=Cover (front)",
@@ -198,16 +219,18 @@ def to_flac(source: Path, freaccmd: str | None,
         if pcm_hash(final) != native_hash:
             raise TranscodeError("audio changed while copying metadata")
 
-        os.replace(final, target)
+        # Copy onto the share under a temporary name, check it arrived
+        # intact, then swap it in and drop the source.
+        partial = target.with_name(f".{target.name}.part")
+        shutil.copyfile(final, partial)
+        if partial.stat().st_size != final.stat().st_size:
+            partial.unlink(missing_ok=True)
+            raise TranscodeError("copy to the music folder was incomplete")
+        os.replace(partial, target)
         source.unlink()
         return target
     finally:
-        native.unlink(missing_ok=True)
-        final.unlink(missing_ok=True)
-        try:
-            scratch.rmdir()
-        except OSError:
-            pass
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- history
@@ -415,12 +438,14 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
                 raise item.media.error
             final = Path(item.final_path)
             flac = final.with_suffix(".flac")
-            if flac.exists() or final.exists():
+            if flac.exists():
                 stats["skipped"] += 1
-                emit("track_skipped", reason="file exists",
-                     path=str(flac if flac.exists() else final), **info)
+                emit("track_skipped", reason="file exists", path=str(flac), **info)
                 return
-            await downloader.download(item)
+            # A source left by an earlier attempt (or run) is converted again
+            # rather than downloaded again or mistaken for a finished track.
+            if not final.exists():
+                await downloader.download(item)
             if not final.exists():
                 raise RuntimeError("download produced no file")
             codec = probe(final)["codec"]
@@ -446,7 +471,6 @@ async def handle(media, args, downloader, history: History, freaccmd, stats) -> 
             if attempt < ATTEMPTS:
                 await asyncio.sleep(2 ** attempt)
 
-    stats["failed"] += 1
     emit("track_failed", error=last_error, **info)
 
 
