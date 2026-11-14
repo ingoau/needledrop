@@ -2,14 +2,19 @@ FROM python:3.13-slim-trixie
 
 ARG FREAC_VERSION=1.1.7
 ARG FREAC_SHA256=
+# The pip that ships with the base image vendors an old urllib3 and msgpack.
+ARG PIP_VERSION=26.3
 
 # ffmpeg/ffprobe for transcoding, fpcalc for beets' chroma plugin, and the
 # GTK/codec runtime fre:ac's command line tool links against (even headless).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# The upgrade picks up Debian security fixes newer than the base image.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
         ca-certificates curl git tini ffmpeg libchromaprint-tools \
         libgtk-3-0t64 libpulse0 libsndfile1 libflac14 libogg0 libvorbis0a \
         libvorbisenc2 libopus0 libmp3lame0 libmpg123-0t64 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --root-user-action=ignore "pip==${PIP_VERSION}"
 
 # fre:ac: decodes Apple's ALAC more reliably than FFmpeg does
 RUN curl -fsSL -o /tmp/freac.AppImage \
@@ -21,14 +26,16 @@ RUN curl -fsSL -o /tmp/freac.AppImage \
     && ln -s /opt/freac/AppRun /usr/local/bin/freaccmd \
     && freaccmd --help=flac | grep -q "FLAC Audio Encoder"
 
-# beets, in its own venv, pinned to the host's versions
+# beets, in its own venv, at pinned versions
 COPY beets/requirements.txt /tmp/beets-requirements.txt
 RUN python -m venv /opt/beets \
+    && /opt/beets/bin/pip install --no-cache-dir "pip==${PIP_VERSION}" \
     && /opt/beets/bin/pip install --no-cache-dir -r /tmp/beets-requirements.txt
 
 # gamdl + the web app
 COPY requirements.txt /tmp/app-requirements.txt
 RUN python -m venv /opt/app \
+    && /opt/app/bin/pip install --no-cache-dir "pip==${PIP_VERSION}" \
     && /opt/app/bin/pip install --no-cache-dir -r /tmp/app-requirements.txt
 
 COPY --chmod=a+rX beets /opt/needledrop/beets
