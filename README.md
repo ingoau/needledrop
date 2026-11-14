@@ -51,7 +51,7 @@ top (`data/beets-overlay.yaml`): its bundled plugins come first, and a
 folder instead. If your `library.db` stores host paths, mount the music at
 the same path inside the container (`MUSIC_MOUNT=$MUSIC_PATH`).
 
-beets is pinned (2.13.1 with filetote, importreplace, pyacoustid) so plugins
+beets is pinned (2.14.1 with filetote, importreplace, pyacoustid) so plugins
 built against it keep working. The bundled `searchfix` plugin tidies
 MusicBrainz and Spotify queries for Apple Music releases (drops the
 " - Single" suffix and requires every search field to match).

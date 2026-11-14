@@ -1,9 +1,11 @@
-# Pinned to the versions installed on mini-server (uv tool "beets").
-beets==2.13.1
+# Pinned so the bundled plugins (searchfix, needledrop_beets) are tested
+# against a known beets. Keep beets on the host at the same version if it
+# shares library.db with the container.
+beets==2.14.1
 pyacoustid==1.3.1
 beets-filetote==1.3.7
 beets-importreplace @ git+https://github.com/edgars-supe/beets-importreplace.git@2069316c288719bd5f814d7dee6f02a2ad480b86
 mediafile==0.17.0
-confuse==2.3.0
+confuse==2.3.1
 requests==2.34.2
 requests-ratelimiter==0.10.0
