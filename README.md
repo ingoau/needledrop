@@ -1,5 +1,12 @@
 # Needledrop
 
+> [!WARNING]
+> **I don't recommend using this.** It's entirely AI-generated slop, it isn't
+> polished, and it's only here because I use it myself. It's built around my own
+> setup and may break or change at any time without notice.
+>
+> I'm not accepting issues or pull requests. Fork it if you want to change it.
+
 Search Apple Music, rip it to verified FLAC, and triage what beets makes of
 it — from one web page.
 
