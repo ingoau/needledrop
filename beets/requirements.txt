@@ -9,3 +9,8 @@ mediafile==0.17.0
 confuse==2.3.1
 requests==2.34.2
 requests-ratelimiter==0.10.0
+# Transitive (via requests); pinned to fixed versions: certifi < 2026.10.18
+# ships compromised emSign roots (GHSA-6q48-6c7w-9gw2), idna < 3.15 has
+# GHSA-65pc-fj4g-8rjx.
+certifi==2026.10.23
+idna==3.20
